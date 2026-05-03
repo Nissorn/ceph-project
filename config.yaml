@@ -1,0 +1,65 @@
+project:
+  name: "cephalometric-singapodent"
+  version: "0.1.0"
+
+data:
+  raw_dir: "data/raw"
+  processed_dir: "data/processed"
+  annotation_file: "data/raw/annotations/annotations.xml"
+  image_dir: "data/raw/images"
+  landmarks_json: "data/processed/landmarks_clean.json"
+  calibration_csv: "data/processed/calibration.csv"
+
+keypoints:
+  names:
+    - "Upper_tip"
+    - "Upper_apex"
+    - "Labial_midroot"
+    - "Labial_crest"
+    - "Palatal_midroot"
+    - "Palatal_crest"
+    - "ANS"
+    - "PNS"
+  num_keypoints: 8
+  calibration_mm: 30.0
+
+model:
+  architecture: "hrnet_w32"
+  pretrained: "coco"
+  input_size: [512, 512]
+  heatmap_size: [128, 128]
+  sigma: 2.0
+
+training:
+  batch_size: 4
+  epochs: 100
+  lr: 0.001
+  weight_decay: 0.0001
+  device: "mps"
+  num_workers: 0  # must be 0 on MPS/Mac — multiprocessing causes hangs
+  eval_strategy: "lopo"
+
+augmentation:
+  rotation_limit: 5
+  zoom_limit: 0.1
+  brightness_limit: 0.2
+  contrast_limit: 0.2
+  clahe: true
+  horizontal_flip: false  # NEVER true — breaks lateral cephalogram anatomy
+
+phase3:
+  # PENDING confirmation from Dr.
+  tipping_threshold_deg: null
+  translation_threshold_mm: null
+  treatment_classes:
+    - "Uncontrolled_tipping"
+    - "Controlled_tipping"
+    - "Translation"
+    - "Root_torque"
+    - "Extrusion"
+    - "Intrusion"
+
+evaluation:
+  sdr_thresholds_mm: [2.0, 2.5, 3.0, 4.0]
+  confidence_low_threshold: 0.3  # below this → flag as low confidence (red dot)
+  tta_n_augments: 5
