@@ -18,6 +18,8 @@ KEYPOINT_NAMES = [
     "Palatal_crest",
     "ANS",
     "PNS",
+    "LB",
+    "PB"
 ]
 NUM_KEYPOINTS = len(KEYPOINT_NAMES)
 

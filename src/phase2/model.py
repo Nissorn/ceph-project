@@ -1,16 +1,16 @@
-"""HRNet-W32 wrapper for 8-keypoint cephalometric landmark detection."""
+"""HRNet-W32 wrapper for 10-keypoint cephalometric landmark detection."""
 
 import torch
 import torch.nn as nn
 
 
-NUM_KEYPOINTS = 8
+NUM_KEYPOINTS = 10
 
 
 def build_hrnet(num_keypoints: int = NUM_KEYPOINTS, pretrained: bool = True) -> nn.Module:
     """
     Build HRNet-W32 with heatmap head for keypoint detection.
-    Uses timm's pretrained COCO pose weights — 8 keypoints match our landmark count.
+    Uses timm's pretrained COCO pose weights — 10 keypoints match our landmark count.
     """
     try:
         import timm

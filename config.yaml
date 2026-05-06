@@ -5,7 +5,7 @@ project:
 data:
   raw_dir: "data/raw"
   processed_dir: "data/processed"
-  annotation_file: "data/raw/annotations/annotations.xml"
+  annotation_file: "data/annotations.xml"
   image_dir: "data/raw/images"
   landmarks_json: "data/processed/landmarks_clean.json"
   calibration_csv: "data/processed/calibration.csv"
@@ -20,7 +20,9 @@ keypoints:
     - "Palatal_crest"
     - "ANS"
     - "PNS"
-  num_keypoints: 8
+    - "LB"
+    - "PB"
+  num_keypoints: 10
   calibration_mm: 30.0
 
 model:

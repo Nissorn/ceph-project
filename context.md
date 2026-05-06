@@ -80,18 +80,24 @@ Ruler is nearly vertical in all images. Annotated for all 104 images.
 
 ## Keypoint Specification
 
-**Confirmed order (index 0–7) — hardcoded as `KEYPOINT_NAMES` constant:**
+**10 logical keypoints — indices 0–9:**
 
-| Index | Name | Clinical meaning |
-|-------|------|-----------------|
-| 0 | Upper_tip | Tip of upper central incisor (crown) |
-| 1 | Upper_apex | Root apex of upper central incisor |
-| 2 | Labial_midroot | Midpoint of root on labial (front) surface |
-| 3 | Labial_crest | Alveolar bone crest on labial side |
-| 4 | Palatal_midroot | Midpoint of root on palatal (back) surface |
-| 5 | Palatal_crest | Alveolar bone crest on palatal side |
-| 6 | ANS | Anterior Nasal Spine — stable reference point |
-| 7 | PNS | Posterior Nasal Spine — stable reference point |
+| Index | Name | Source | Clinical meaning |
+|-------|------|--------|-----------------|
+| 0 | Upper_tip | CVAT annotation | Tip of upper central incisor (crown) |
+| 1 | Upper_apex | CVAT annotation | Root apex of upper central incisor |
+| 2 | Labial_midroot | CVAT annotation | Midpoint of root on labial (front) surface |
+| 3 | Labial_crest | CVAT annotation | Alveolar bone crest on labial side |
+| 4 | Palatal_midroot | CVAT annotation | Midpoint of root on palatal (back) surface |
+| 5 | Palatal_crest | CVAT annotation | Alveolar bone crest on palatal side |
+| 6 | ANS | CVAT annotation | Anterior Nasal Spine — stable reference point |
+| 7 | PNS | CVAT annotation | Posterior Nasal Spine — stable reference point |
+| 8 | LB | CVAT annotation (v2+) | Labial bone level — annotated directly in CVAT skeleton |
+| 9 | PB | CVAT annotation (v2+) | Palatal bone level — annotated directly in CVAT skeleton |
+
+**All 10 keypoints** are annotated via CVAT skeleton label `Incisor_Maxilla_Complex_Skeleton`.  
+LB and PB appear in CVAT v2+ exports only — the v1 export (used in Session 1) only had 8 keypoints.  
+`KEYPOINT_NAMES` in `src/data/cvat_parser.py` is fixed at 10 entries — never revert to 8.
 
 **ANS and PNS are the superimposition reference plane** — they define the maxillary base plane that is used to register T1 and T2 images in Phase 3.
 
@@ -100,16 +106,23 @@ Ruler is nearly vertical in all images. Annotated for all 104 images.
 ## 4-Phase Pipeline
 
 ### Phase 1 — Data Parsing & Calibration
-**Status:** Ready to implement  
-**Blocker:** None  
+**Status:** ✅ Calibration complete (2026-05-05). Landmark parsing ready — will activate automatically when Dr. exports annotations.  
+**Blocker:** None for calibration. Landmark JSON awaits Dr. completing skeleton annotations.
 
 ```
-Input:  data/raw/annotations/annotations.xml
-        data/raw/images/*.jpg
+Input:  data/annotations.xml          ← actual location (not data/raw/annotations/)
 
-Output: data/processed/landmarks_clean.json
-        data/processed/calibration.csv
+Output: data/processed/calibration.csv        — 104 rows, all 104 pass QC
+        data/processed/calibration_clean.csv  — 104 rows (= calibration.csv; 0 rejected)
+        data/processed/rejection_log.txt      — empty
 ```
+
+**Calibration stats (2026-05-05, all 104 images):**
+- mm/pixel min:  0.0974
+- mm/pixel max:  0.0990
+- mm/pixel mean: 0.0984 (≈ 1 pixel ≈ 0.1 mm)
+- mm/pixel std:  0.0004 — scanner is extremely consistent; no outliers
+- QC range used: [0.05, 0.30] — all 104 pass comfortably
 
 **landmarks_clean.json structure:**
 ```json
@@ -294,3 +307,12 @@ translation_mm = translation_px * mm_per_pixel
 - Identified key papers: CL-Detection2023 (arxiv:2409.15834), rank-1 paper (arxiv:2309.17143)
 - Wrote parse_and_verify.py (Phase 1 prototype)
 - Pending: Dr. to finish landmark annotations + confirm thresholds
+
+### 2026-05-05 (Session 2)
+- Built Phase 1 calibration pipeline: `src/data/cvat_parser.py`, `calibration.py`, `quality_filter.py`
+- CLI: `scripts/run_phase1_calibration.py --cvat_xml data/annotations.xml --output_dir data/processed/`
+- Ran on all 104 images: 104/104 pass QC, 0 rejected
+- mm/pixel: mean 0.0984, std 0.0004 — scanner is extremely consistent
+- Keypoint spec updated: added LB(8) and PB(9) as computed (not annotated) points
+- `src/data/cvat_parser.py` will pick up skeleton landmarks automatically when Dr. exports them
+- Outputs live at `data/processed/calibration.csv` and `data/processed/calibration_clean.csv`
