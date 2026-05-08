@@ -85,7 +85,7 @@ class CephalometricDataset(Dataset):
         import cv2
 
         rec = self.records[idx]
-        img_path = self.image_dir / rec["file_name"]
+        img_path = self.image_dir / rec["filename"]
 
         img = cv2.imread(str(img_path))
         if img is None:

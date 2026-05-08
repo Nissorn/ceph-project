@@ -9,6 +9,7 @@ from __future__ import annotations
 import logging
 import xml.etree.ElementTree as ET
 from pathlib import Path
+from typing import Optional
 
 log = logging.getLogger(__name__)
 
@@ -27,7 +28,7 @@ KEYPOINT_NAMES: list[str] = [
 ]
 
 CALIBRATION_LABEL = "Calibration_30mm"
-SKELETON_LABEL = "Incisor_Maxilla_Complex_Skeleton"
+SKELETON_LABEL = "Incisor_Maxilla_Complex"
 TREATMENT_TAGS = frozenset({
     "Uncontrolled_tipping",
     "Controlled_tipping",
@@ -69,7 +70,7 @@ def parse_cvat_xml(xml_path: str | Path) -> list[dict]:
         timepoint       str    'T1' | 'T2' | 'unknown'
         width           int
         height          int
-        calibration_pts list[tuple[float,float]] | None  — [(x1,y1),(x2,y2)] or None
+        calibration_pts Optional[list[tuple[float,float]]]  — [(x1,y1),(x2,y2)] or None
         has_calibration bool
         keypoints       list[dict]   [{"name":str,"x":float,"y":float,"visible":bool}]
         valid_mask      list[int]    1=present, 0=missing — same order as KEYPOINT_NAMES
