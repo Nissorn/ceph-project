@@ -24,9 +24,14 @@ tqdm>=4.66.0
 # Metrics and evaluation
 scikit-learn>=1.4.0
 scipy>=1.12.0
+iterative-stratification>=0.1.7
 
 # Visualization
 matplotlib>=3.8.0
+
+# MVP Dashboard (P11)
+streamlit>=1.35.0
+pillow>=10.0.0
 
 # Jupyter notebooks
 jupyter>=1.0.0

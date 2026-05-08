@@ -42,7 +42,7 @@ training:
   eval_strategy: "lopo"
 
 augmentation:
-  rotation_limit: 5
+  rotation_limit: 10
   zoom_limit: 0.1
   brightness_limit: 0.2
   contrast_limit: 0.2
