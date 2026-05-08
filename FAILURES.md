@@ -40,9 +40,69 @@ Read this before starting any task. Each entry is a mistake that already happene
 
 ---
 
+## 2026-05-07 — train.py read landmarks_clean.json as dict, not list
+
+**Bug:** `src/phase2/train.py:113` — `landmarks_data["images"]` (treating the JSON as `{"images": [...]}`)  
+**Reality:** `parse_annotations.py` saves records as a bare JSON array `[...]`, not a dict  
+**Impact:** `TypeError: list indices must be integers or slices, not str` — crash before any training starts  
+**Fix:** Changed `landmarks_data["images"]` → `landmarks_data` (treat loaded JSON as list directly)  
+**Rule:** Always match the exact save format. `parse_annotations.py` calls `json.dump(records, f)` — that is a list.
+
+---
+
+## 2026-05-07 — run_pipeline.py same JSON dict assumption + wrong key name
+
+**Bug 1:** `scripts/run_pipeline.py:36` — `json.load(f)["images"]` — same issue as train.py above  
+**Bug 2:** `scripts/run_pipeline.py:84` — `rec_t2["file_name"]` (underscore) — schema uses `"filename"`  
+**Impact:** Both crash before producing any output  
+**Fix:** Line 36 → `json.load(f)`; Line 84 → `rec_t2["filename"]`  
+**Rule:** Never assume a wrapper dict around the JSON array. Check the save call in parse_annotations.py.
+
+---
+
+## 2026-05-07 — requirements.txt missing iterstrat
+
+**Bug:** `src/data/splits.py` imports `from iterstrat.ml_stratifiers import ...` but `iterstrat` was not in requirements.txt  
+**Impact:** `pip install -r requirements.txt` does not install splits dependency — silent failure until splits.py is first called  
+**Fix:** Added `iterstrat>=2.0.0` to requirements.txt  
+**Rule:** When writing a new import, add the package to requirements.txt in the same commit.
+
+---
+
+## 2026-05-07 — Python 3.10+ union type syntax used in Python 3.9 venv
+
+**Bug:** `metrics.py:52` and `train.py:107` used `X | None` union syntax (PEP 604, requires Python 3.10+)  
+**Reality:** Project venv is Python 3.9.6 — raises `TypeError: unsupported operand type(s) for |`  
+**Fix:** Added `from typing import Optional` and replaced `X | None` → `Optional[X]` in both files  
+**Rule:** Always use `Optional[X]` from `typing` until venv is explicitly upgraded past Python 3.10.
+
+---
+
 ## 2026-05-05 — Calibration expected range was wrong
 
 **Tried:** context.md said expected range was ~0.04–0.06 mm/pixel  
 **Reality:** Actual values are 0.0974–0.0990 (≈ 0.1 mm/pixel)  
 **Fix applied:** context.md and STATUS.md updated  
 **Rule:** Valid QC range is [0.05, 0.30]. Actual dataset sits at ~0.099 — not 0.04.
+
+---
+
+## 2026-05-08 — SKELETON_LABEL constant did not match XML label (silent keypoint drop)
+
+**Bug:** `src/data/cvat_parser.py:32` — `SKELETON_LABEL = "Incisor_Maxilla_Complex_Skeleton"`
+**Reality:** CVAT XML exports `label="Incisor_Maxilla_Complex"` (no `_Skeleton` suffix).
+**Impact:** The `elif tag == "skeleton" and label == SKELETON_LABEL:` branch never matched. All 10 keypoints were silently dropped for every image. `has_landmarks` remained `false` in all JSON records. Would have caused a crash or trained on zeroed coordinates without any error message.
+**Fix:** Changed constant to `"Incisor_Maxilla_Complex"`. Found and fixed during 2026-05-08 QA audit.
+**Rule:** Always verify parser label constants against the actual `label="..."` attribute in the CVAT XML — a wrong constant silently no-ops rather than raising an exception.
+
+---
+
+## 2026-05-08 — cvat_parser.py uses Python 3.10+ union type syntax in Python 3.9 venv
+
+**Bug:** `cvat_parser.py:72` — `calibration_pts list[tuple[float,float]] | None` union syntax (PEP 604, requires Python 3.10+)  
+
+**Reality:** Project venv is Python 3.9.6 — raises `TypeError: unsupported operand type(s) for |`  
+
+**Fix:** Added `from typing import Optional` and replaced `list[tuple[float,float]] | None` → `Optional[list[tuple[float,float]]]`  
+
+**Rule:** Always use `Optional[X]` from `typing` until venv is explicitly upgraded past Python 3.10.

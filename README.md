@@ -5,7 +5,7 @@ Internship project at Singapodent, Ho Chi Minh City, Vietnam.
 
 ## What it does
 
-1. Detects 8 anatomical landmarks on before/after (T1/T2) X-ray image pairs
+1. Detects 10 anatomical landmarks on before/after (T1/T2) X-ray image pairs
 2. Superimposes T1 on T2 using the ANS-PNS reference plane
 3. Measures tooth movement vectors in millimeters
 4. Classifies the treatment type (tipping, translation, torque, etc.)
@@ -77,7 +77,7 @@ CLAUDE.md       Instructions for Claude Code assistant
 
 Leave-One-Patient-Out Cross Validation (LOPO-CV), 52 folds.
 Metrics: MRE (mm), SDR@2mm, SDR@2.5mm, SDR@3mm, SDR@4mm.
-Target: MRE < 2.0 mm for all 8 landmarks.
+Target: MRE < 2.0 mm for all 10 landmarks.
 
 ## References
 

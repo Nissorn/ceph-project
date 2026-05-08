@@ -1,108 +1,60 @@
 # 01_Current_Phase.md — Immediate Status & Next Action
 
-**Updated:** 2026-05-05 09:12 UTC+7  
-**Session:** Copilot CLI (claude-haiku-4.5)
+**Updated:** 2026-05-07 (post-audit, Claude Sonnet 4.6)
 
 ---
 
-## Current Phase: Phase 2a — Data Augmentation Strategy
+## Current Phase: WAITING — All P1–P8 code complete, blocked on Dr. annotations
 
-### ✅ What was just completed
-- Research on data augmentation for limited cephalometric data
-- Identified safe augmentation ranges (rotation ±15°, brightness ±40%, elastic deformations)
-- Documented full implementation roadmap (Albumentations → DDPM → Scale)
-- Updated `STATUS.md` with 300+ image incoming plan
+### ✅ What was completed (P1–P8)
+- P1: Fixed 10-keypoint mismatch across dataset.py + model.py
+- P2: `scripts/parse_annotations.py` → `data/processed/landmarks_clean.json`
+- P3: `src/data/splits.py` — patient-aware 5-fold MSKF + 15% holdout
+- P4: `src/phase2/augmentation.py` — ±10° Affine, ElasticTransform, GaussNoise, Perspective, CLAHE
+- P5: `src/phase2/loss.py` — AdaptiveWingLoss (Wang et al. ICCV 2019)
+- P6: Skipped — needs ≥1 annotated image
+- P7: `src/phase2b/segmentation.py` + `segmentation_dataset.py` — U-Net scaffold
+- P8: `src/phase2c/classifier.py` + `classifier_dataset.py` — EfficientNet-B3 multi-label
+
+### ✅ Post-implementation audit (2026-05-07)
+- 5 bugs found and fixed (see FAILURES.md)
+- Pipeline dry-run passes: `python scripts/run_phase2_train.py --debug` exits cleanly
+- All imports verified OK against Python 3.9 venv
 
 ### 📊 Current Data State
-- **Images:** 104 current + 300+ incoming from Dr.
-- **Annotations:** ~2/104 have 10-keypoint skeleton (CVAT v2 format)
+- **Images:** 104 (calibration complete) + 300+ incoming from Dr.
+- **Annotations (current XML):** 2 images — 0 skeleton landmarks, 2 polygons
 - **Calibration:** 104/104 complete (mm/pixel: 0.0974–0.0990)
 
-### 🔄 What's Blocked
-1. **Dr. annotations** — Need ~20+ images with full 10-keypoint skeletons before Phase 2 training is useful
-2. **Augmentation pipeline** — Not yet implemented in code (only researched)
-3. **Phase 3 thresholds** — Still null (pending clinical input)
+### 🔄 Blockers
+1. **Dr. skeleton annotations** — Need 20+ keypoint-annotated images to train Phase 2
+2. **Phase 3 thresholds** — tipping_threshold_deg and translation_threshold_mm still null
 
 ---
 
-## ⚡ IMMEDIATE NEXT ACTIONS (Priority Order)
+## ⚡ IMMEDIATE NEXT ACTIONS
 
-### Action 1: Implement Albumentations Pipeline (2–3 days effort)
-**What:** Create `src/phase2/augmentation.py` with heavy augmentation  
-**Input:** 104 images → transform to 500+ variants per epoch  
-**Expected Gain:** 63.8% → 75–80% SDR@2.5mm  
-**Code:** Ready (see `agent_memory/02_AUGMENTATION_RESEARCH.md`)  
-**Status:** ⏳ Waiting for approval to implement
-
-**Do this FIRST** because:
-- Immediate accuracy improvement (no waiting for Dr.)
-- Prevents overfitting before Phase 2 training
-- Fast implementation (CPU-based, no GPU needed)
-
-### Action 2: Validate Augmentation on Test Set
-**What:** Train baseline HRNet-W32 with/without augmentation; compare SDR metrics  
-**Dataset:** LOPO-CV on 104 images (52-fold split, patient-level)  
-**Expectation:** With augmentation SDR ≥ 75%  
-**Status:** ⏳ Waiting for Action 1 completion
-
-### Action 3: Wait for Dr. Annotations
-**What:** Dr. will provide updated CVAT XML with 20+ annotated images  
-**Trigger:** When annotations arrive, re-run `scripts/run_phase1_calibration.py`  
-**Parser readiness:** ✅ Already supports 10 keypoints  
-**Status:** ⏳ Blocked on Dr.
-
-### Action 4 (Optional): Diffusion Synthesis (Weeks 3–4)
-**What:** Train DDPM on best-augmented subset; generate 200–400 synthetic cephalograms  
-**Expected Gain:** 82–88% SDR@2.5mm  
-**Cost:** ~$20–50 GPU + 7–10 days effort  
-**Status:** ⏳ After traditional augmentation plateaus
+When Dr. exports new CVAT XML with skeleton annotations:
+```bash
+cd /Users/onis2/Project/Singdent/ceph-project
+source venv/bin/activate
+python scripts/parse_annotations.py              # regenerate landmarks_clean.json
+python scripts/run_phase2_train.py --debug --max-images 10   # smoke-test
+python scripts/run_phase2_train.py               # full LOPO (52 folds × 100 epochs)
+```
+No code changes needed — pipeline is ready.
 
 ---
 
-## 📋 Workspace Files (Shared AI Context)
+## 📋 Workspace Files
 
 | File | Purpose | Status |
 |------|---------|--------|
-| `agent_memory/00_Project_Context.md` | Master context for all AIs | ✅ Created |
-| `agent_memory/01_Current_Phase.md` | This file (immediate status) | ✅ You are here |
-| `agent_memory/02_AUGMENTATION_RESEARCH.md` | Full augmentation research + code | 🔄 To be created |
-| `FAILURES.md` | Mistakes already made | ✅ Exists (read first!) |
-| `STATUS.md` | Phase snapshot | ✅ Updated today |
-| `CLAUDE.md` | Claude assistant rules | ✅ Exists |
-| `context.md` | Full project journal | ✅ Exists |
+| `agent_memory/00_Project_Context.md` | Master context | ✅ |
+| `agent_memory/01_Current_Phase.md` | This file | ✅ Updated 2026-05-07 |
+| `FAILURES.md` | All past mistakes — read first | ✅ Updated 2026-05-07 |
+| `STATUS.md` | Phase snapshot | ✅ Updated 2026-05-07 |
+| `PIPELINE_PLAN.md` | Full pipeline spec | ✅ |
+| `CLAUDE.md` | Claude rules | ✅ |
 
----
-
-## 🎯 Decision Point
-
-**Should I implement the Albumentations pipeline now?**
-
-Options:
-1. **Yes, implement now** → Start with `src/phase2/augmentation.py` + integrate into dataset loader
-2. **Wait for Dr. annotations first** → Pause until 20+ annotated images available
-3. **Prepare both in parallel** → Code ready but don't train until annotations arrive
-
-**Recommendation:** Option 1 (implement now)
-- Augmentation doesn't require annotated data; works on raw images
-- Better to have infrastructure ready when data arrives
-- No blocking dependencies
-
----
-
-## Phase Transitions
-
-- **Phase 1 → Phase 2a (Data Augmentation):** 🟢 ACTIVE (just started research)
-- **Phase 2a → Phase 2b (Training):** 🟡 Waiting for Dr. annotations (20+ labeled images)
-- **Phase 2b → Phase 3 (Classification):** 🟡 Blocked on treatment thresholds + Phase 2 training completion
-
----
-
-## Key Contacts & Dependencies
-
-- **Dr. (Orthodontist):** Provides annotations + treatment threshold parameters
-- **Singapodent:** Hosts clinic data + validates clinical accuracy
-- **Ceph-AI Project:** This repository (ceph-project on Singdent workspace)
-
----
-
-**Next AI session:** Start by reading `00_Project_Context.md` → `01_Current_Phase.md` → `FAILURES.md` → `STATUS.md`, then decide on next action.
+**Python:** Always `source venv/bin/activate` first. venv at `venv/` (Python 3.9.6).
