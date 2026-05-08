@@ -1,6 +1,7 @@
 """LOPO training loop for HRNet landmark detection — MPS backend."""
 
 from pathlib import Path
+from typing import Optional
 
 import torch
 import torch.nn as nn
@@ -9,6 +10,7 @@ from tqdm import tqdm
 
 from src.phase2.dataset import CephalometricDataset, get_lopo_splits
 from src.phase2.heatmap import encode_heatmaps, decode_heatmaps
+from src.phase2.loss import AdaptiveWingLoss
 from src.phase2.metrics import radial_error, compute_all_metrics
 from src.phase2.model import CephalometricModel
 from src.utils.io import load_config
@@ -25,7 +27,7 @@ def train_one_epoch(
 ) -> float:
     model.train()
     total_loss = 0.0
-    criterion = nn.MSELoss()
+    criterion = AdaptiveWingLoss()
 
     for imgs, keypoints, valid_mask, _ in tqdm(loader, leave=False):
         imgs = imgs.to(device)
@@ -49,17 +51,16 @@ def train_one_epoch(
                 pred_heatmaps, size=heatmap_size, mode="bilinear", align_corners=False
             )
 
-        # Apply valid mask — only compute loss on annotated landmarks
-        mask = torch.from_numpy(valid_np).bool().to(device)  # [B, N]
-        mask_4d = mask.unsqueeze(-1).unsqueeze(-1).expand_as(gt_tensor)
-
-        loss = criterion(pred_heatmaps[mask_4d], gt_tensor[mask_4d])
+        # Pass valid_mask to AdaptiveWingLoss so only annotated landmarks contribute
+        mask = torch.from_numpy(valid_np).bool().to(device)  # [B, K]
+        loss = criterion(pred_heatmaps, gt_tensor, mask)
         optimizer.zero_grad()
         loss.backward()
         optimizer.step()
         total_loss += loss.item()
 
     return total_loss / max(len(loader), 1)
+
 
 
 def evaluate(
@@ -101,7 +102,11 @@ def evaluate(
     return all_errors
 
 
-def run_lopo_training(config_path: str = "config.yaml") -> dict:
+def run_lopo_training(
+    config_path: str = "config.yaml",
+    debug: bool = False,
+    max_images: Optional[int] = None,
+) -> dict:
     """Run full Leave-One-Patient-Out cross validation. Returns aggregated metrics."""
     cfg = load_config(config_path)
 
@@ -110,7 +115,14 @@ def run_lopo_training(config_path: str = "config.yaml") -> dict:
 
     with open(cfg["data"]["landmarks_json"]) as f:
         landmarks_data = json.load(f)
-    records = [r for r in landmarks_data["images"] if r.get("has_landmarks")]
+    records = [r for r in landmarks_data if r.get("has_landmarks")]
+
+    if max_images is not None:
+        records = records[:max_images]
+
+    if not records:
+        print("WARNING: No annotated images found. Waiting for landmark annotations from Dr.")
+        return {"mre_mean_mm": None, "mre_std_mm": None, "per_landmark_mre": {}, "note": "no_data"}
 
     cal_df = pd.read_csv(cfg["data"]["calibration_csv"]).set_index("image_id")
     calibration_lookup = cal_df["mm_per_pixel"].to_dict()
@@ -120,6 +132,10 @@ def run_lopo_training(config_path: str = "config.yaml") -> dict:
     input_size = tuple(cfg["model"]["input_size"])
 
     splits = get_lopo_splits(records)
+    if debug:
+        splits = splits[:1]
+
+    epochs = 1 if debug else cfg["training"]["epochs"]
     all_fold_errors = []
 
     for fold_idx, (train_ids, test_ids) in enumerate(splits):
@@ -158,7 +174,7 @@ def run_lopo_training(config_path: str = "config.yaml") -> dict:
             weight_decay=cfg["training"]["weight_decay"],
         )
 
-        for epoch in range(cfg["training"]["epochs"]):
+        for epoch in range(epochs):
             train_one_epoch(
                 model, train_loader, optimizer, device,
                 heatmap_size, cfg["model"]["sigma"], input_size,

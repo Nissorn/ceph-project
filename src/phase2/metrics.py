@@ -1,5 +1,6 @@
 """Evaluation metrics: MRE (Mean Radial Error) and SDR (Success Detection Rate)."""
 
+from typing import Optional
 import numpy as np
 
 
@@ -25,11 +26,13 @@ def mean_radial_error(errors: list[np.ndarray]) -> tuple[float, float]:
     Aggregate radial errors across all images.
     Returns (mean_mm, std_mm).
     """
+    if not errors:
+        return float("nan"), float("nan")
     all_errors = np.concatenate([e.flatten() for e in errors])
     return float(all_errors.mean()), float(all_errors.std())
 
 
-def per_landmark_mre(errors: list[np.ndarray], num_keypoints: int = 8) -> np.ndarray:
+def per_landmark_mre(errors: list[np.ndarray]) -> np.ndarray:
     """
     Compute per-landmark MRE across all images.
     Returns array of shape [num_keypoints] in mm.
@@ -49,7 +52,7 @@ def sdr(errors: list[np.ndarray], threshold_mm: float) -> float:
 def compute_all_metrics(
     errors: list[np.ndarray],
     sdr_thresholds: list[float] = (2.0, 2.5, 3.0, 4.0),
-    keypoint_names: list[str] | None = None,
+    keypoint_names: Optional[list[str]] = None,
 ) -> dict:
     """Compute full evaluation report dict."""
     mre_mean, mre_std = mean_radial_error(errors)

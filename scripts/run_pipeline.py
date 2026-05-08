@@ -33,7 +33,7 @@ def main():
     output_dir.mkdir(parents=True, exist_ok=True)
 
     with open(pred_json) as f:
-        all_images = json.load(f)["images"]
+        all_images = json.load(f)
 
     def find_image(pid, tp):
         for img in all_images:
@@ -81,7 +81,7 @@ def main():
     with open(report_path, "w") as f:
         json.dump(report, f, indent=2)
 
-    t2_img_path = str(Path(cfg["data"]["image_dir"]) / rec_t2["file_name"])
+    t2_img_path = str(Path(cfg["data"]["image_dir"]) / rec_t2["filename"])
     if Path(t2_img_path).exists():
         overlay = draw_tracing_overlay(
             t2_img_path, kp_t1, kp_t2, valid_t1, valid_t2,

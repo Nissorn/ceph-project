@@ -23,13 +23,21 @@ def build_train_transform(
         )
 
     transforms = [
-        A.Rotate(limit=rotation_limit, p=0.7),
-        A.RandomScale(scale_limit=zoom_limit, p=0.5),
+        A.Affine(
+            translate_percent={"x": (-0.08, 0.08), "y": (-0.08, 0.08)},
+            scale=(1 - zoom_limit, 1 + zoom_limit),
+            rotate=(-rotation_limit, rotation_limit),
+            p=0.7,
+        ),
         A.RandomBrightnessContrast(
             brightness_limit=brightness_limit,
             contrast_limit=contrast_limit,
             p=0.7,
         ),
+        A.ElasticTransform(alpha=30, sigma=4, p=0.3),
+        A.GaussNoise(std_range=(0.02, 0.10), p=0.3),
+        A.GridDistortion(distort_limit=0.2, p=0.3),
+        A.Perspective(scale=(0.05, 0.1), p=0.3),
     ]
 
     if clahe:
