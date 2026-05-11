@@ -1,5 +1,5 @@
 # STATUS.md — Current State Snapshot
-_Updated: 2026-05-08 (P9 + P10 + P11 implemented — full mock pipeline complete)_
+_Updated: 2026-05-11 (P9-P11 complete, production architecture planning initiated)_
 
 ## What is done
 - **[P9 DONE]** Medical Logic Engine (Biomechanics) — `src/phase3/biomechanics.py`
@@ -17,6 +17,14 @@ _Updated: 2026-05-08 (P9 + P10 + P11 implemented — full mock pipeline complete
   - Draws U1 axis (Upper-tip→Upper-apex), palatal plane (ANS→PNS), LB–PB corridor
   - `st.metric` for angle/distances; styled cards for all 5 classification fields
   - Sidebar calibration input (mm/px), debug JSON expander, clinical disclaimer
+- **[ARCHITECTURE]** Production Architecture Planning — `PRODUCTION_ARCHITECTURE_PLAN.md`
+  - Detailed roadmap for microservices architecture with FastAPI backend
+  - Plan for Astro frontend replacing Streamlit dashboard
+  - Strategy for Docker containerization and CVAT Nuclio integration
+- **[FASTAPI BACKEND]** FastAPI Infrastructure — `backend/`
+  - Created routing, service logic importing `biomechanics.py`, Pydantic schemas, and endpoints.
+- **[BONE THICKNESS]** Bone Thickness Architecture — `bone_thickness_architecture.md`
+  - Design document for BoneThicknessCalculator class enhancement
 - Phase 1 calibration: `scripts/run_phase1_calibration.py` — 104/104 pass QC → `data/processed/calibration.csv`
 - `src/data/cvat_parser.py` — parses calibration + skeleton (10 keypoints) + polygons + tags
 - mm/pixel: mean 0.0984, range [0.0974, 0.0990] — single scanner, extremely consistent
@@ -32,6 +40,10 @@ _Updated: 2026-05-08 (P9 + P10 + P11 implemented — full mock pipeline complete
 - **[AUDIT 2026-05-07]** Full code audit + 5 bugs fixed; dry-run pipeline test passes; `--debug` mode added to training script
 
 ## Planned Work (While Waiting for Annotations)
+- **Production Infrastructure**: FastAPI backend infrastructure created (routes, models, services, main.py)
+- **Bone Thickness Enhancement**: Implement enhancements based on `bone_thickness_architecture.md`
+- **Microservices Migration**: Migrate from monolithic Streamlit to decoupled frontend/backend
+- **Containerization**: Develop Docker images and orchestration configurations
 - *(All P9–P11 planned items are now done. Awaiting Dr. annotations for model training.)*
 
 ## Dataset
@@ -48,7 +60,7 @@ _Updated: 2026-05-08 (P9 + P10 + P11 implemented — full mock pipeline complete
 
 ## Active blockers
 - Dr. annotation: need 20+ skeleton annotations before meaningful training
-- Phase 3 thresholds: tipping_threshold_deg and translation_threshold_mm still null (pending Dr.)
+- Phase 3 thresholds: tipping_threshold_deg and threshold_mm still null (pending Dr.)
 
 ## Known bugs remaining
 - None. All bugs from audit logged in FAILURES.md and fixed.
@@ -58,6 +70,8 @@ _Updated: 2026-05-08 (P9 + P10 + P11 implemented — full mock pipeline complete
 - Active code: `src/data/` (NOT src/phase1/ — that is legacy)
 - Config: `config.yaml` (annotation_file corrected, num_keypoints=10)
 - Pipeline plan: `PIPELINE_PLAN.md`
+- Production architecture: `PRODUCTION_ARCHITECTURE_PLAN.md` — roadmap for microservices migration
+- Bone thickness architecture: `bone_thickness_architecture.md` — design document for enhanced measurements
 - Failures log: `FAILURES.md` — read before starting any task
 - Python venv: `venv/` — always `source venv/bin/activate` before running Python
 - **Planned biomechanics:** `src/phase3/biomechanics.py`
