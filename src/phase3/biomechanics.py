@@ -21,6 +21,7 @@ Usage:
 """
 
 import math
+import numpy as np
 from typing import Dict, Optional, Tuple
 
 
@@ -202,7 +203,7 @@ def calculate_metrics(
     ----------
     landmarks : dict
         Mapping of landmark name → (x, y) pixel coordinates.
-        Must contain at minimum: 'Upper-tip', 'Upper-apex', 'ANS', 'PNS',
+        Must contain at minimum: 'Upper_tip', 'Upper_apex', 'ANS', 'PNS',
         'LB', 'PB'.
     mm_per_pixel : float
         Calibration factor for this image (mm per pixel).  Default matches
@@ -331,6 +332,207 @@ def classify_treatment(
 
 
 # ---------------------------------------------------------------------------
+# Bone Thickness Calculator
+# ---------------------------------------------------------------------------
+
+def generate_mock_masks(image_shape: Tuple[int, int] = (512, 512)) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """Generate dummy masks for testing the BoneThicknessCalculator."""
+    tooth_mask = np.zeros(image_shape, dtype=np.uint8)
+    labial_bone_mask = np.zeros(image_shape, dtype=np.uint8)
+    palatal_bone_mask = np.zeros(image_shape, dtype=np.uint8)
+    
+    # Create a simple tooth shape (a rectangle)
+    tooth_mask[100:400, 240:260] = 1
+    
+    # Create simple bone shapes (rectangles next to the tooth)
+    labial_bone_mask[150:350, 200:235] = 1
+    palatal_bone_mask[120:380, 265:300] = 1
+    
+    return tooth_mask, labial_bone_mask, palatal_bone_mask
+
+
+class BoneThicknessCalculator:
+    """Calculates alveolar bone thickness measurements."""
+    
+    def __init__(
+        self,
+        u1_axis_vector: Tuple[Tuple[float, float], Tuple[float, float]],
+        upper_apex_point: Tuple[float, float],
+        tooth_mask: np.ndarray,
+        labial_bone_mask: np.ndarray,
+        palatal_bone_mask: np.ndarray,
+        mm_per_pixel: float = 0.0984
+    ):
+        self.u1_axis_vector = u1_axis_vector
+        self.upper_apex_point = upper_apex_point
+        self.tooth_mask = tooth_mask
+        self.labial_bone_mask = labial_bone_mask
+        self.palatal_bone_mask = palatal_bone_mask
+        self.mm_per_pixel = mm_per_pixel
+        
+        self.upper_tip = np.array(u1_axis_vector[0], dtype=float)
+        self.upper_apex = np.array(u1_axis_vector[1], dtype=float)
+        
+        # Calculate U1 axis vector and unit vector
+        self.u1_vec = self.upper_apex - self.upper_tip
+        self.u1_length = np.linalg.norm(self.u1_vec)
+        if self.u1_length == 0:
+            self.u1_unit = np.array([0.0, 1.0])
+        else:
+            self.u1_unit = self.u1_vec / self.u1_length
+            
+        # Calculate perpendicular unit vector (90 deg clockwise rotation)
+        self.u1_perp_unit = np.array([-self.u1_unit[1], self.u1_unit[0]])
+
+    def calculate_plan_a_3_lines(self) -> Dict[str, Dict[str, float]]:
+        """Measure bone thickness at cervical, middle, and apical thirds."""
+        # Calculate division points
+        cervical_point = self.upper_tip + self.u1_unit * (self.u1_length / 3)
+        middle_point = self.upper_tip + self.u1_unit * (2 * self.u1_length / 3)
+        apical_point = self.upper_apex
+        
+        results = {}
+        
+        levels = [
+            (cervical_point, "cervical"),
+            (middle_point, "middle"),
+            (apical_point, "apical")
+        ]
+        
+        for point, level_name in levels:
+            level_results = {}
+            for bone_name, bone_mask in [("labial", self.labial_bone_mask), ("palatal", self.palatal_bone_mask)]:
+                coords = np.argwhere(bone_mask > 0)
+                if len(coords) == 0:
+                    level_results[bone_name + "_thickness"] = 0.0
+                    continue
+                
+                # Convert to (x, y) format
+                points_xy = np.fliplr(coords)
+                vectors = points_xy - point
+                
+                # Project vectors onto perpendicular axis
+                projections = np.dot(vectors, self.u1_perp_unit)
+                
+                t_min = np.min(projections)
+                t_max = np.max(projections)
+                width_pixels = abs(t_max - t_min)
+                
+                level_results[bone_name + "_thickness"] = width_pixels * self.mm_per_pixel
+                
+            results[level_name] = level_results
+            
+        return results
+
+    def _get_t_min_t_apex(self) -> Tuple[float, float, float]:
+        """Helper to find the topmost bone projection and apex projection."""
+        combined_bone_mask = np.logical_or(self.labial_bone_mask, self.palatal_bone_mask)
+        bone_coords = np.argwhere(combined_bone_mask > 0)
+        if len(bone_coords) == 0:
+            return float('inf'), self.u1_length, self.u1_length
+            
+        bone_points_xy = np.fliplr(bone_coords)
+        vectors_to_bone = bone_points_xy - self.upper_tip
+        t_projections = np.dot(vectors_to_bone, self.u1_unit)
+        
+        t_min = float(np.min(t_projections))
+        t_apex = self.u1_length
+        return t_min, t_apex, self.u1_length
+
+    def calculate_plan_b_pure_min(self) -> float:
+        """Find the absolute minimum bone thickness along the entire tooth length."""
+        t_min, t_apex, _ = self._get_t_min_t_apex()
+        if t_min == float('inf'):
+            return 0.0
+            
+        min_thickness = float('inf')
+        num_samples = int(np.ceil(t_apex - t_min)) + 1
+        if num_samples <= 0:
+            return 0.0
+            
+        t_samples = np.linspace(t_min, t_apex, num_samples)
+        
+        labial_coords = np.argwhere(self.labial_bone_mask > 0)
+        labial_xy = np.fliplr(labial_coords) if len(labial_coords) > 0 else np.array([])
+        
+        palatal_coords = np.argwhere(self.palatal_bone_mask > 0)
+        palatal_xy = np.fliplr(palatal_coords) if len(palatal_coords) > 0 else np.array([])
+        
+        for t_s in t_samples:
+            sample_point = self.upper_tip + self.u1_unit * t_s
+            position_min_thickness = float('inf')
+            
+            for name, points_xy in [("labial", labial_xy), ("palatal", palatal_xy)]:
+                if len(points_xy) == 0:
+                    thickness = 0.0
+                else:
+                    vectors = points_xy - sample_point
+                    projections = np.dot(vectors, self.u1_perp_unit)
+                    t_min_proj = np.min(projections)
+                    t_max_proj = np.max(projections)
+                    width_pixels = abs(t_max_proj - t_min_proj)
+                    thickness = width_pixels * self.mm_per_pixel
+                position_min_thickness = min(position_min_thickness, thickness)
+                
+            if position_min_thickness < min_thickness:
+                min_thickness = position_min_thickness
+                
+        if min_thickness == float('inf'):
+            return 0.0
+            
+        return min_thickness
+
+    def calculate_plan_c_min_with_offset(self, offset_mm: float = 2.0) -> float:
+        """Find the minimum bone thickness excluding an upper offset."""
+        t_min, t_apex, _ = self._get_t_min_t_apex()
+        if t_min == float('inf'):
+            return 0.0
+            
+        offset_pixels = offset_mm / self.mm_per_pixel
+        t_offset = t_min + offset_pixels
+        
+        if t_offset > t_apex:
+            t_offset = t_min
+            
+        min_thickness = float('inf')
+        num_samples = int(np.ceil(t_apex - t_offset)) + 1
+        if num_samples <= 0:
+            return 0.0
+            
+        t_samples = np.linspace(t_offset, t_apex, num_samples)
+        
+        labial_coords = np.argwhere(self.labial_bone_mask > 0)
+        labial_xy = np.fliplr(labial_coords) if len(labial_coords) > 0 else np.array([])
+        
+        palatal_coords = np.argwhere(self.palatal_bone_mask > 0)
+        palatal_xy = np.fliplr(palatal_coords) if len(palatal_coords) > 0 else np.array([])
+        
+        for t_s in t_samples:
+            sample_point = self.upper_tip + self.u1_unit * t_s
+            position_min_thickness = float('inf')
+            
+            for name, points_xy in [("labial", labial_xy), ("palatal", palatal_xy)]:
+                if len(points_xy) == 0:
+                    thickness = 0.0
+                else:
+                    vectors = points_xy - sample_point
+                    projections = np.dot(vectors, self.u1_perp_unit)
+                    t_min_proj = np.min(projections)
+                    t_max_proj = np.max(projections)
+                    width_pixels = abs(t_max_proj - t_min_proj)
+                    thickness = width_pixels * self.mm_per_pixel
+                position_min_thickness = min(position_min_thickness, thickness)
+                
+            if position_min_thickness < min_thickness:
+                min_thickness = position_min_thickness
+                
+        if min_thickness == float('inf'):
+            return 0.0
+            
+        return min_thickness
+
+
+# ---------------------------------------------------------------------------
 # Built-in tests
 # ---------------------------------------------------------------------------
 
@@ -432,3 +634,31 @@ if __name__ == "__main__":
     print("\n" + "=" * 70)
     print("  All tests passed — biomechanics.py is working correctly.")
     print("=" * 70)
+
+    # ── Step 6: Test Bone Thickness Calculator ────────────────────────────────
+    print("\n[6] Testing Bone Thickness Calculator …")
+    t_mask, l_mask, p_mask = generate_mock_masks()
+    
+    calc = BoneThicknessCalculator(
+        u1_axis_vector=(lm["Upper_tip"], lm["Upper_apex"]),
+        upper_apex_point=lm["Upper_apex"],
+        tooth_mask=t_mask,
+        labial_bone_mask=l_mask,
+        palatal_bone_mask=p_mask,
+        mm_per_pixel=MM_PER_PX
+    )
+    
+    plan_a = calc.calculate_plan_a_3_lines()
+    print("\n    Plan A (3 levels):")
+    for level, dict_ in plan_a.items():
+        print(f"      {level:<10}: Labial={dict_['labial_thickness']:.2f}mm, Palatal={dict_['palatal_thickness']:.2f}mm")
+        
+    plan_b = calc.calculate_plan_b_pure_min()
+    print(f"\n    Plan B (Pure Min): {plan_b:.2f}mm")
+    
+    plan_c = calc.calculate_plan_c_min_with_offset(offset_mm=2.0)
+    print(f"    Plan C (Min with 2mm offset): {plan_c:.2f}mm")
+
+    print("\n    Bone Thickness calculations PASSED ✓")
+    print("=" * 70)
+
