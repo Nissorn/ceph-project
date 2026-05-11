@@ -21,6 +21,8 @@ from src.phase3.biomechanics import (
     calculate_metrics,
     classify_treatment,
     mock_landmarks,
+    BoneThicknessCalculator,
+    generate_mock_masks,
 )
 
 # ---------------------------------------------------------------------------
@@ -330,6 +332,25 @@ with st.sidebar:
     )
 
     st.markdown("<hr>", unsafe_allow_html=True)
+
+    st.markdown("**Bone Thickness Strategy**")
+    bone_strategy = st.radio(
+        "Select measurement plan:",
+        options=[
+            "Plan A: 3-Lines (Crest/Mid/Apical)",
+            "Plan B: Pure Minimum Scan",
+            "Plan C: Minimum with Top Offset (Recommended)"
+        ],
+        index=2,
+        label_visibility="collapsed"
+    )
+    
+    if "Plan C" in bone_strategy:
+        top_offset = st.slider("Top Offset (mm)", min_value=1.0, max_value=5.0, value=2.0, step=0.1)
+    else:
+        top_offset = 2.0
+
+    st.markdown("<hr>", unsafe_allow_html=True)
     st.markdown(
         """
         <div style="color:#475569; font-size:0.72rem; line-height:1.7;">
@@ -453,6 +474,23 @@ else:
         pb_apex_dist = metrics["pb_apex_dist_mm"],
     )
 
+    # ── Calculate bone thickness using raw mock masks and raw landmarks ──
+    t_mask, l_mask, p_mask = generate_mock_masks(image_shape=(512, 512))
+    calc = BoneThicknessCalculator(
+        u1_axis_vector=(raw_landmarks["Upper_tip"], raw_landmarks["Upper_apex"]),
+        upper_apex_point=raw_landmarks["Upper_apex"],
+        tooth_mask=t_mask,
+        labial_bone_mask=l_mask,
+        palatal_bone_mask=p_mask,
+        mm_per_pixel=mm_per_pixel
+    )
+    if "Plan A" in bone_strategy:
+        thickness_result = calc.calculate_plan_a_3_lines()
+    elif "Plan B" in bone_strategy:
+        thickness_result = calc.calculate_plan_b_pure_min()
+    else:
+        thickness_result = calc.calculate_plan_c_min_with_offset(offset_mm=top_offset)
+
     # ── Layout: image left, report right ──────────────────────────────────
     col_img, col_report = st.columns([1.1, 1], gap="large")
 
@@ -551,6 +589,34 @@ else:
             f"</div>",
             unsafe_allow_html=True,
         )
+
+        # ── Bone Thickness Results ────────────────────────────────────────
+        st.markdown(
+            f'<div class="report-card"><h4>Bone Thickness ({bone_strategy.split(":")[0]})</h4>',
+            unsafe_allow_html=True,
+        )
+        if "Plan A" in bone_strategy:
+            import pandas as pd
+            df = pd.DataFrame({
+                "Level": ["Cervical", "Middle", "Apical"],
+                "Labial (mm)": [
+                    f"{thickness_result['cervical']['labial_thickness']:.2f}",
+                    f"{thickness_result['middle']['labial_thickness']:.2f}",
+                    f"{thickness_result['apical']['labial_thickness']:.2f}"
+                ],
+                "Palatal (mm)": [
+                    f"{thickness_result['cervical']['palatal_thickness']:.2f}",
+                    f"{thickness_result['middle']['palatal_thickness']:.2f}",
+                    f"{thickness_result['apical']['palatal_thickness']:.2f}"
+                ]
+            })
+            st.dataframe(df, hide_index=True, use_container_width=True)
+        else:
+            if thickness_result < 0.5:
+                st.markdown(f'<div class="avoid-label">⚠ Critical Warning: Minimum thickness is {thickness_result:.2f} mm (&lt; 0.5mm)</div>', unsafe_allow_html=True)
+            else:
+                st.markdown(f'<div class="prefer-label">✅ Minimum Bone Thickness: {thickness_result:.2f} mm</div>', unsafe_allow_html=True)
+        st.markdown("</div>", unsafe_allow_html=True)
 
         # ── Disclaimer ────────────────────────────────────────────────────
         st.markdown(
