@@ -10,6 +10,7 @@ timm>=0.9.12
 # Computer vision and augmentation
 albumentations>=1.4.0
 opencv-python>=4.9.0
+segmentation-models-pytorch>=0.5.0
 
 # Data processing
 numpy>=1.26.0
