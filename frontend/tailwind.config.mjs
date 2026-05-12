@@ -1,14 +1,16 @@
 /** @type {import('tailwindcss').Config} */
 export default {
+	content: ['./src/**/*.{astro,html,js,jsx,md,mdx,svelte,ts,tsx,vue}'],
   darkMode: 'class',
-  content: ['./src/**/*.{astro,html,js,jsx,md,mdx,svelte,ts,tsx,vue}'],
-  theme: {
-    extend: {
+	theme: {
+		extend: {
       colors: {
-        primary: '#0c2340',
-        accent: '#f28c28',
-      },
+        singapodent: {
+          primary: '#0c2340',
+          accent: '#f28c28',
+        }
+      }
     },
-  },
-  plugins: [],
+	},
+	plugins: [],
 }

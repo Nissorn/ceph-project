@@ -1,19 +1,21 @@
-const API_BASE_URL = 'http://localhost:8000/api/v1';
+export const API_BASE_URL = 'http://localhost:8000/api/v1';
 
-export class ApiClient {
-  static async getHealth() {
-    const res = await fetch(`${API_BASE_URL}/health`);
-    return res.json();
-  }
-
-  static async analyzeImage(data: any) {
-    const res = await fetch(`${API_BASE_URL}/analyze`, {
-      method: 'POST',
+export async function fetchFromAPI(endpoint: string, options: RequestInit = {}) {
+  const url = `${API_BASE_URL}${endpoint}`;
+  try {
+    const response = await fetch(url, {
+      ...options,
       headers: {
         'Content-Type': 'application/json',
+        ...options.headers,
       },
-      body: JSON.stringify(data),
     });
-    return res.json();
+    if (!response.ok) {
+      throw new Error(`API error: ${response.statusText}`);
+    }
+    return await response.json();
+  } catch (error) {
+    console.error('Error fetching from API:', error);
+    throw error;
   }
 }

@@ -1,11 +1,51 @@
 ---
-import Welcome from '../components/Welcome.astro';
-import Layout from '../layouts/Layout.astro';
-
-// Welcome to Astro! Wondering what to do next? Check out the Astro documentation at https://docs.astro.build
-// Don't want to use any of this? Delete everything in this file, the `assets`, `components`, and `layouts` directories, and start fresh.
+import ThemeToggle from '../components/ui/ThemeToggle';
+import DashboardApp from '../components/ui/DashboardApp';
+import '../styles/global.css';
 ---
 
-<Layout>
-	<Welcome />
-</Layout>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <meta name="viewport" content="width=device-width" />
+    <meta name="generator" content={Astro.generator} />
+    <title>Singapodent | Premium AI Dashboard</title>
+  </head>
+  <body class="h-screen overflow-hidden flex flex-col bg-slate-50 dark:bg-slate-900 transition-colors duration-300 text-slate-900 dark:text-slate-100 antialiased selection:bg-singapodent-accent selection:text-white">
+    <header class="bg-white/80 dark:bg-slate-900/80 backdrop-blur-md border-b border-slate-200 dark:border-slate-800 z-50 transition-colors duration-300 shadow-sm relative">
+      <div class="max-w-[1600px] w-full mx-auto px-6 h-[72px] flex items-center justify-between">
+        <div class="flex items-center gap-3">
+          <div class="w-8 h-8 rounded-lg bg-singapodent-primary dark:bg-singapodent-accent flex items-center justify-center shadow-lg">
+             <svg class="w-5 h-5 text-white" fill="currentColor" viewBox="0 0 24 24"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-1 15h-2v-2h2v2zm0-4h-2V7h2v6z"/></svg>
+          </div>
+          <h1 class="text-2xl tracking-tighter">
+            <span class="font-extrabold text-singapodent-primary dark:text-white">SINGAPODENT</span>
+            <span class="font-light text-singapodent-accent ml-2">AI Dashboard</span>
+          </h1>
+        </div>
+        <div class="flex items-center space-x-4">
+          <ThemeToggle client:load />
+        </div>
+      </div>
+    </header>
+
+    <main class="flex-1 overflow-hidden w-full mx-auto max-w-[1600px] p-6 pt-8">
+      <DashboardApp client:load />
+    </main>
+    
+    <style>
+      /* Quick global overrides specifically to enhance the premium feel */
+      .custom-scrollbar::-webkit-scrollbar {
+        width: 6px;
+      }
+      .custom-scrollbar::-webkit-scrollbar-track {
+        background: transparent;
+      }
+      .custom-scrollbar::-webkit-scrollbar-thumb {
+        background-color: rgba(156, 163, 175, 0.3);
+        border-radius: 10px;
+      }
+    </style>
+  </body>
+</html>
