@@ -42,7 +42,7 @@ _Updated: 2026-05-11 (P9-P11 complete, production architecture planning initiate
 ## Planned Work (While Waiting for Annotations)
 - **Production Infrastructure**: FastAPI backend infrastructure created (routes, models, services, main.py)
 - **Bone Thickness Enhancement**: Implement enhancements based on `bone_thickness_architecture.md`
-- **Microservices Migration**: Migrate from monolithic Streamlit to decoupled frontend/backend
+- **Microservices Migration**: Astro frontend initialized, components designed and assembled
 - **Containerization**: Develop Docker images and orchestration configurations
 - *(All P9–P11 planned items are now done. Awaiting Dr. annotations for model training.)*
 
