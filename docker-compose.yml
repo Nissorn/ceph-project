@@ -1,0 +1,16 @@
+services:
+  api:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    ports:
+      - "8000:8000"
+
+  web:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    ports:
+      - "4321:4321"
+    depends_on:
+      - api

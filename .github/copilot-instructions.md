@@ -1,8 +1,9 @@
-# CLAUDE.md — Cephalometric Landmark Detection
+# GitHub Copilot Instructions — Cephalometric Landmark Detection
+<!-- Rules synced from CLAUDE.md — update CLAUDE.md first, then mirror here. Last synced: 2026-05-12 -->
 
-**Read these three files first, in order:**
+Read before starting any task:
 1. `FAILURES.md` — mistakes already made; do not repeat them
-2. `STATUS.md` — current state in 20 lines
+2. `STATUS.md` — current state snapshot
 3. `context.md` — only if you need deeper background
 
 ---

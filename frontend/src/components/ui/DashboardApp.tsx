@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import UploadZone from './UploadZone';
 import MetricCard from './MetricCard';
+import CephCanvasEditor from './CephCanvasEditor';
 
 export default function DashboardApp() {
   const [file, setFile] = useState<File | null>(null);
@@ -57,19 +58,35 @@ export default function DashboardApp() {
           
           {file ? (
             <div className="flex-1 min-h-0 relative flex items-center justify-center bg-slate-900 rounded-2xl overflow-hidden group">
-               {/* Just showing filename for mock preview */}
-               <div className="absolute top-4 left-4 z-10 bg-black/60 text-white px-3 py-1 rounded-full text-sm font-medium backdrop-blur-sm">
+               {/* Filename badge */}
+               <div className="absolute top-3 left-3 z-20 bg-black/60 text-white px-3 py-1 rounded-full text-sm font-medium backdrop-blur-sm pointer-events-none">
                  {file.name}
                </div>
 
-               <img 
-                 src={URL.createObjectURL(file)} 
-                 alt="Cephalogram preview" 
-                 className="w-full h-full object-contain opacity-80"
-               />
+               {/* Remove button */}
+               <button
+                  onClick={() => {setFile(null); setResults(null); setError(null);}}
+                  className="absolute top-3 right-3 z-20 bg-red-500/80 hover:bg-red-500 text-white p-2 rounded-full backdrop-blur-sm transition opacity-0 group-hover:opacity-100"
+                  title="Remove Image"
+               >
+                 <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" /></svg>
+               </button>
+
+               {/* After analysis: interactive Ceph Editor; before: plain preview */}
+               {results && !isLoading ? (
+                 <div className="absolute inset-0 z-10">
+                   <CephCanvasEditor imageFile={file} />
+                 </div>
+               ) : (
+                 <img
+                   src={URL.createObjectURL(file)}
+                   alt="Cephalogram preview"
+                   className="w-full h-full object-contain opacity-80"
+                 />
+               )}
 
                {isLoading && (
-                 <div className="absolute inset-0 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center z-20">
+                 <div className="absolute inset-0 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center z-30">
                    <div className="flex flex-col items-center">
                     <svg className="animate-spin h-12 w-12 text-singapodent-accent mb-4" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
                       <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
@@ -79,14 +96,6 @@ export default function DashboardApp() {
                    </div>
                  </div>
                )}
-
-               <button 
-                  onClick={() => {setFile(null); setResults(null); setError(null);}}
-                  className="absolute top-4 right-4 z-10 bg-red-500/80 hover:bg-red-500 text-white p-2 rounded-full backdrop-blur-sm transition opacity-0 group-hover:opacity-100"
-                  title="Remove Image"
-               >
-                 <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" /></svg>
-               </button>
             </div>
           ) : (
             <UploadZone onFileSelect={setFile} />

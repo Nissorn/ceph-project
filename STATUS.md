@@ -1,5 +1,47 @@
 # STATUS.md — Current State Snapshot
-_Updated: 2026-05-11 (P9-P11 complete, production architecture planning initiated)_
+_Updated: 2026-05-12 (Microservices MVP complete, E2E verified, project paused awaiting clinical data)_
+
+---
+
+## ⛔ CURRENT BLOCKER — READ FIRST
+**Training is strictly paused. Do NOT write or execute new AI training code until CVAT skeleton + polygon annotations are provided by Dr. Viet/Thủy.**
+
+---
+
+## Milestone: Microservices MVP Complete (2026-05-12)
+**E2E Verification passed on 2026-05-12. All three subsystems confirmed working.**
+
+### Architecture — Fully Migrated to Microservices
+- **Backend:** FastAPI (`backend/`) on port 8000 — receives `multipart/form-data` image uploads, returns structured JSON (metrics, bone thickness, classification)
+- **Frontend:** Astro 6.3.1 + React 19 + Tailwind CSS 4 (`frontend/`) on port 4321 — polished medical dashboard with Glassmorphism, Light/Dark mode, Singapodent Navy/Orange brand
+
+### AI Pipeline Status
+- **Phase 2 — HRNet Landmark Detection:** Scaffold complete, 10-keypoint system, AdaptiveWingLoss — untrained (awaiting annotations)
+- **Phase 2b — U-Net Segmentation (SMP ResNet-34):** Smoke-tested — both dataloader (tensor shape [3,512,512]) and forward/backward pass (24,436,659 params, all with gradients) confirmed PASS
+- **Phase 3 — Biomechanics Engine:** All self-tests PASS — U1-PP angle, LB/PB distances, Zhang et al. classification, BoneThicknessCalculator Plans A/B/C
+
+### Frontend State
+- MVP UI is **complete and production-built** (`npm run build` passes, 1 page in ~1s)
+- Displays: raw X-ray preview before analysis; **interactive `CephCanvasEditor` after analysis**
+- `CephCanvasEditor` (`frontend/src/components/ui/CephCanvasEditor.tsx`) — react-konva canvas editor:
+  - 10 draggable keypoint markers (Sella, Nasion, Orbitale, Porion, A/B-points, Pogonion, Menton, ANS, PNS) with orange crosshair + name labels
+  - 3 editable polygons (Maxillary Bone, Mandibular Bone, Cranial Base) with filled regions + vertex handles
+  - **Drag** any vertex to reposition it (polygon updates live)
+  - **Shift+Click** anywhere on a polygon edge → inserts new vertex at the nearest point on that edge
+  - **Dbl-Click** or **Alt+Click** a vertex → deletes it (min 3 vertices enforced)
+  - Image fits the container with correct aspect ratio; handles window resize
+  - Default landmark positions are normalized fractions — replaced by real model output once training is complete
+- CVAT external server deployment **abandoned** — replaced by this built-in editor
+- Dependencies added: `konva`, `react-konva`
+
+### venv Note
+The `.venv` at `ceph-project/.venv` does not have `pip` pre-installed. Bootstrap with:
+```bash
+.venv/bin/python -m ensurepip && .venv/bin/python -m pip install -r requirements.txt
+```
+`segmentation-models-pytorch` is now installed in `.venv` (installed 2026-05-12).
+
+---
 
 ## What is done
 - **[P9 DONE]** Medical Logic Engine (Biomechanics) — `src/phase3/biomechanics.py`

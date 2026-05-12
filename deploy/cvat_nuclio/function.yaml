@@ -1,0 +1,49 @@
+apiVersion: nuclio.io/v1beta1
+kind: Function
+metadata:
+  name: cephalometric-inference
+  namespace: cvat
+  annotations:
+    name: Cephalometric Analysis
+    type: detector
+    framework: pytorch
+    spec: |
+      [
+        {"id": 0,  "name": "Upper_incisor",   "type": "polygon", "attributes": []},
+        {"id": 1,  "name": "Labial_bone",      "type": "polygon", "attributes": []},
+        {"id": 2,  "name": "Palatal_bone",     "type": "polygon", "attributes": []},
+        {"id": 3,  "name": "Upper_tip",        "type": "points",  "attributes": []},
+        {"id": 4,  "name": "Upper_apex",       "type": "points",  "attributes": []},
+        {"id": 5,  "name": "Labial_midroot",   "type": "points",  "attributes": []},
+        {"id": 6,  "name": "Labial_crest",     "type": "points",  "attributes": []},
+        {"id": 7,  "name": "Palatal_midroot",  "type": "points",  "attributes": []},
+        {"id": 8,  "name": "Palatal_crest",    "type": "points",  "attributes": []},
+        {"id": 9,  "name": "ANS",              "type": "points",  "attributes": []},
+        {"id": 10, "name": "PNS",              "type": "points",  "attributes": []},
+        {"id": 11, "name": "LB",               "type": "points",  "attributes": []},
+        {"id": 12, "name": "PB",               "type": "points",  "attributes": []}
+      ]
+
+spec:
+  description: >
+    HRNet-W32 landmark detection (10 keypoints) + U-Net ResNet-34 segmentation
+    (Upper_incisor, Labial_bone, Palatal_bone) for lateral cephalogram X-rays.
+  runtime: python:3.9
+  handler: main:handler
+  eventTimeout: 60s
+
+  build:
+    image: pytorch/pytorch:2.0.0-cuda11.7-cudnn8-runtime
+    commands:
+      - pip install --no-cache-dir albumentations segmentation-models-pytorch pillow opencv-python-headless timm
+
+  triggers:
+    http:
+      kind: http
+      maxWorkers: 1
+      attributes:
+        port: 8070
+
+  resources:
+    limits:
+      memory: 4Gi
