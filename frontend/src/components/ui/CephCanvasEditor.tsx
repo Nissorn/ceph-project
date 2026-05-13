@@ -30,15 +30,15 @@ interface Props {
 // ── Medical imaging colour palette ───────────────────────────────────────────
 
 const POLY_PALETTE = [
-  { fill: 'rgba(0,255,255,0.15)',  stroke: 'rgba(0,255,255,0.9)'  }, // Cyan    — Upper_incisor
-  { fill: 'rgba(255,0,255,0.15)', stroke: 'rgba(255,0,255,0.9)'  }, // Magenta — Labial_bone
-  { fill: 'rgba(0,255,128,0.15)', stroke: 'rgba(0,255,128,0.9)'  }, // Green   — Palatal_bone
+  { fill: 'rgba(6, 182, 212, 0.15)',  stroke: 'rgba(6, 182, 212, 0.9)'  },  // Cyan Accent    — Upper_incisor
+  { fill: 'rgba(236, 72, 153, 0.15)', stroke: 'rgba(236, 72, 153, 0.9)' }, // Pink/Magenta — Labial_bone
+  { fill: 'rgba(16, 185, 129, 0.15)', stroke: 'rgba(16, 185, 129, 0.9)' }, // Emerald Green  — Palatal_bone
 ];
 
-const KP_RING_NORMAL   = '#ffff00';
+const KP_RING_NORMAL   = '#fbbf24'; // Vibrant Amber
 const KP_DOT_NORMAL    = '#ffffff';
 const KP_RING_SELECTED = '#ffffff';
-const KP_DOT_SELECTED  = '#ffff00';
+const KP_DOT_SELECTED  = '#f59e0b'; // Deep glowing Amber
 
 // ── Correct clinical landmark defaults (normalised 0–1 for lateral ceph) ─────
 
@@ -108,6 +108,7 @@ export default function CephCanvasEditor({
   const [pointSize, setPointSize]         = useState(4);
   const [debugInfo, setDebugInfo]         = useState({ x: 0, y: 0, imageX: 0, imageY: 0 });
   const [isDebugMode, setIsDebugMode]     = useState(false);
+  const [isToolbarOpen, setIsToolbarOpen] = useState(true);
 
   // ── Sync stale-proof ref with state ──────────────────────────────────────────
   useEffect(() => { scaleRef.current = stageScale; }, [stageScale]);
@@ -141,7 +142,7 @@ export default function CephCanvasEditor({
     return () => el.removeEventListener('wheel', block);
   }, []);
 
-  // ── Init shapes when image loads ─────────────────────────────────────────────
+  // ── Reactive init mapping syncing dynamic parent metrics ─────────────────────
   useEffect(() => {
     if (!img) return;
     const { width: w, height: h } = img;
@@ -159,7 +160,7 @@ export default function CephCanvasEditor({
           stroke: POLY_PALETTE[i % POLY_PALETTE.length].stroke,
         }))
     );
-  }, [img]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [img, initialKeypoints, initialPolygons]);
 
   // ── Fit-to-stage transform (content / Layer coordinates) ─────────────────────
   const { offX, offY, fitScale } = useMemo(() => {
@@ -386,8 +387,8 @@ export default function CephCanvasEditor({
                       closed
                       fill={poly.fill}
                       stroke={isSel ? '#ffffff' : poly.stroke}
-                      strokeWidth={isSel ? 2 : 1.5}
-                      hitStrokeWidth={10}
+                      strokeWidth={(isSel ? 2 : 1.5) / stageScale}
+                      hitStrokeWidth={10 / stageScale}
                       onClick={(e) => { setSelectedId(poly.id); addEdgePoint(poly.id, e); }}
                       onMouseEnter={(e) => setCursor(e, 'pointer')}
                       onMouseLeave={(e) => setCursor(e, 'grab')}
@@ -395,9 +396,9 @@ export default function CephCanvasEditor({
                     {/* Polygon label — shadow replaces stroke for legibility */}
                     <Text
                       x={stagePts[0] ?? 0}
-                      y={(stagePts[1] ?? 0) - 16}
+                      y={(stagePts[1] ?? 0) - (16 / stageScale)}
                       text={poly.name}
-                      fontSize={11} fontStyle="bold"
+                      fontSize={11 / stageScale} fontStyle="bold"
                       fill="white"
                       shadowColor="black" shadowBlur={4} shadowOpacity={1}
                       shadowOffsetX={1} shadowOffsetY={1}
@@ -410,11 +411,11 @@ export default function CephCanvasEditor({
                         <Circle
                           key={vi}
                           x={vx} y={vy}
-                          radius={pointSize}
-                          hitStrokeWidth={20}
+                          radius={pointSize / stageScale}
+                          hitStrokeWidth={20 / stageScale}
                           fill={isSel ? '#ffffff' : poly.stroke}
                           stroke={poly.stroke}
-                          strokeWidth={1}
+                          strokeWidth={1 / stageScale}
                           draggable
                           onDragMove={(e) => moveVertex(poly.id, vi, e)}
                           onDblClick={(e) => deleteVertex(poly.id, vi, e)}
@@ -440,11 +441,11 @@ export default function CephCanvasEditor({
                   <Group key={kp.id}>
                     <Circle
                       x={kx} y={ky}
-                      radius={pointSize}
-                      hitStrokeWidth={20}
+                      radius={pointSize / stageScale}
+                      hitStrokeWidth={20 / stageScale}
                       fill={isSel ? KP_DOT_SELECTED : KP_DOT_NORMAL}
                       stroke={isSel ? KP_RING_SELECTED : KP_RING_NORMAL}
-                      strokeWidth={1}
+                      strokeWidth={1.5 / stageScale}
                       draggable
                       onDragEnd={(e) => moveKp(kp.id, e)}
                       onClick={() => setSelectedId(kp.id)}
@@ -453,8 +454,8 @@ export default function CephCanvasEditor({
                     />
                     {/* Keypoint label — shadow replaces stroke for legibility */}
                     <Text
-                      x={kx + 8} y={ky - 6}
-                      text={kp.name} fontSize={10} fontStyle="bold"
+                      x={kx + (8 / stageScale)} y={ky - (6 / stageScale)}
+                      text={kp.name} fontSize={10 / stageScale} fontStyle="bold"
                       fill="white"
                       shadowColor="black" shadowBlur={4} shadowOpacity={1}
                       shadowOffsetX={1} shadowOffsetY={1}
@@ -515,96 +516,119 @@ export default function CephCanvasEditor({
           </div>
         )}
 
-        {/* ── Floating glass pill toolbar ──────────────────────────────────── */}
+        {/* ── Adapted Multi-Line Responsive Glass Pill Toolbar ──────────────── */}
         {img && (
-          <div className="absolute bottom-6 left-1/2 -translate-x-1/2 bg-black/80 backdrop-blur-md text-white/90 px-6 py-3 rounded-full border border-white/10 flex gap-5 text-sm items-center shadow-2xl z-50">
+          isToolbarOpen ? (
+            <div className="absolute bottom-4 left-1/2 -translate-x-1/2 w-[95%] md:w-auto max-w-4xl bg-black/85 backdrop-blur-md text-white/90 px-4 md:px-5 py-2.5 rounded-2xl md:rounded-full border border-white/10 flex flex-wrap gap-x-3 gap-y-2 text-xs items-center justify-center shadow-2xl z-50 animate-fade-in">
 
-            {/* Instructions */}
-            <span className="flex items-center gap-1.5 text-xs text-white/60 whitespace-nowrap">
-              <kbd className={chip}>Drag</kbd> move
-              <span className="mx-0.5 text-white/20">·</span>
-              <kbd className={chip}>Scroll</kbd> zoom
-              <span className="mx-0.5 text-white/20">·</span>
-              <kbd className={chip}>⇧+Click</kbd> add pt
-              <span className="mx-0.5 text-white/20">·</span>
-              <kbd className={chip}>DblClick</kbd> del pt
-            </span>
+              {/* Instructions */}
+              <span className="flex items-center gap-1 text-white/60">
+                <kbd className={chip}>Drag</kbd> move
+                <span className="mx-0.5 text-white/20">·</span>
+                <kbd className={chip}>Scroll</kbd> zoom
+                <span className="mx-0.5 text-white/20">·</span>
+                <kbd className={chip}>⇧+Click</kbd> add pt
+                <span className="mx-0.5 text-white/20">·</span>
+                <kbd className={chip}>DblClick</kbd> del pt
+              </span>
 
-            <span className="text-white/20 select-none">|</span>
+              <span className="hidden md:inline text-white/20 select-none">|</span>
 
-            {/* Visibility toggles */}
-            <label className="flex items-center gap-1.5 cursor-pointer text-xs whitespace-nowrap select-none">
-              <input
-                type="checkbox" checked={showLandmarks}
-                onChange={(e) => setShowLandmarks(e.target.checked)}
-                className="accent-yellow-400 w-3 h-3"
-              />
-              Landmarks
-            </label>
-            <label className="flex items-center gap-1.5 cursor-pointer text-xs whitespace-nowrap select-none">
-              <input
-                type="checkbox" checked={showPolygons}
-                onChange={(e) => setShowPolygons(e.target.checked)}
-                className="accent-cyan-400 w-3 h-3"
-              />
-              Polygons
-            </label>
+              {/* Visibility toggles */}
+              <div className="flex items-center gap-3">
+                <label className="flex items-center gap-1.5 cursor-pointer select-none">
+                  <input
+                    type="checkbox" checked={showLandmarks}
+                    onChange={(e) => setShowLandmarks(e.target.checked)}
+                    className="accent-amber-400 w-3 h-3 cursor-pointer"
+                  />
+                  Landmarks
+                </label>
+                <label className="flex items-center gap-1.5 cursor-pointer select-none">
+                  <input
+                    type="checkbox" checked={showPolygons}
+                    onChange={(e) => setShowPolygons(e.target.checked)}
+                    className="accent-cyan-400 w-3 h-3 cursor-pointer"
+                  />
+                  Polygons
+                </label>
+              </div>
 
-            <span className="text-white/20 select-none">|</span>
+              <span className="hidden md:inline text-white/20 select-none">|</span>
 
-            {/* Point size slider */}
-            <label className="flex items-center gap-2 text-xs whitespace-nowrap select-none">
-              <span className="text-white/60">Point Size</span>
-              <input
-                type="range" min="1" max="10" step="0.5"
-                value={pointSize}
-                onChange={(e) => setPointSize(Number(e.target.value))}
-                className="w-20 accent-orange-400 cursor-pointer"
-              />
-              <span className="font-mono w-5 text-right text-white/80">{pointSize}</span>
-            </label>
+              {/* Point size slider */}
+              <label className="flex items-center gap-2 select-none">
+                <span className="text-white/60 hidden sm:inline">Size</span>
+                <input
+                  type="range" min="1" max="10" step="0.5"
+                  value={pointSize}
+                  onChange={(e) => setPointSize(Number(e.target.value))}
+                  className="w-16 md:w-20 accent-orange-400 cursor-pointer"
+                />
+                <span className="font-mono w-4 text-right text-white/80">{pointSize}</span>
+              </label>
 
-            {/* Zoom indicator */}
-            {stageScale > 1 && (
-              <>
-                <span className="text-white/20 select-none">|</span>
-                <button
-                  onClick={resetZoom}
-                  className="flex items-center gap-1 text-xs text-white/60 hover:text-white transition-colors whitespace-nowrap"
-                >
-                  {Math.round(stageScale * 100)}%
-                  <span className="text-white/30 text-[10px]">✕</span>
-                </button>
-              </>
-            )}
+              {/* Zoom indicator */}
+              {stageScale > 1 && (
+                <>
+                  <span className="text-white/20 select-none">|</span>
+                  <button
+                    onClick={resetZoom}
+                    className="flex items-center gap-1 text-white/60 hover:text-white transition-colors"
+                  >
+                    {Math.round(stageScale * 100)}%
+                    <span className="text-white/30 text-[10px]">✕</span>
+                  </button>
+                </>
+              )}
 
-            {/* Selected element name */}
-            {selectedName && (
-              <>
-                <span className="text-white/20 select-none">|</span>
-                <span className="font-mono text-xs text-cyan-300 truncate max-w-[120px]">
-                  ● {selectedName}
-                </span>
-              </>
-            )}
+              {/* Selected element name */}
+              {selectedName && (
+                <>
+                  <span className="text-white/20 select-none">|</span>
+                  <span className="font-mono text-cyan-300 truncate max-w-[100px] md:max-w-[120px]">
+                    ● {selectedName}
+                  </span>
+                </>
+              )}
 
-            <span className="text-white/20 select-none">|</span>
+              <span className="text-white/20 select-none">|</span>
 
-            {/* Debug mode toggle */}
+              {/* Debug mode toggle */}
+              <button
+                onClick={() => setIsDebugMode(v => !v)}
+                title={isDebugMode ? 'Hide debug tools' : 'Show debug tools'}
+                className={`px-2 py-0.5 rounded transition-colors ${
+                  isDebugMode
+                    ? 'bg-amber-500/30 text-amber-300 border border-amber-500/40 font-medium'
+                    : 'text-white/40 hover:text-white/70'
+                }`}
+              >
+                Dev
+              </button>
+
+              <span className="text-white/20 select-none">|</span>
+
+              {/* Hide Toolbar Button */}
+              <button
+                onClick={() => setIsToolbarOpen(false)}
+                title="Minimize toolbar"
+                className="text-white/40 hover:text-white transition-colors p-1 rounded"
+              >
+                <span className="text-xs font-bold leading-none">✕</span>
+              </button>
+
+            </div>
+          ) : (
             <button
-              onClick={() => setIsDebugMode(v => !v)}
-              title={isDebugMode ? 'Hide debug tools' : 'Show debug tools'}
-              className={`text-xs px-2 py-0.5 rounded transition-colors whitespace-nowrap ${
-                isDebugMode
-                  ? 'bg-amber-500/30 text-amber-300 border border-amber-500/40'
-                  : 'text-white/40 hover:text-white/70'
-              }`}
+              onClick={() => setIsToolbarOpen(true)}
+              title="Expand toolbar"
+              className="absolute bottom-4 left-1/2 -translate-x-1/2 bg-black/85 hover:bg-black text-white/80 hover:text-white px-3.5 py-1.5 rounded-full border border-white/10 flex items-center gap-1.5 text-xs backdrop-blur-md shadow-xl transition-all z-50 animate-fade-in"
             >
-              Dev
+              <span className="w-2 h-2 rounded-full bg-amber-400 animate-pulse" />
+              <span>Show Toolbar</span>
             </button>
-
-
-          </div>
+          )
         )}
 
         {/* Hidden file input for JSON import */}
