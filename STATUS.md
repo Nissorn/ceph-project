@@ -72,6 +72,8 @@ The `.venv` at `ceph-project/.venv` does not have `pip` pre-installed. Bootstrap
 - mm/pixel: mean 0.0984, range [0.0974, 0.0990] — single scanner, extremely consistent
 - **[P1 DONE]** Fixed 10-keypoint mismatch: `src/phase2/dataset.py` + `src/phase2/model.py` (NUM_KEYPOINTS=10)
 - **[P2 DONE]** Created `scripts/parse_annotations.py` → generated `data/processed/landmarks_clean.json`
+- **[INGEST DONE]** Created `scripts/ingest_editor_exports.py` to seamlessly merge manual annotations exported from the React Konva `CephCanvasEditor` into `data/processed/landmarks_clean.json` with strict keypoint order and mm/px calibration mapping.
+- **[UI POLISH DONE]** Integrated wide banner asset (`logo.webp`) into Astro header layout with fluid aspect-ratio scaling and responsive grouping.
 - **[P3 DONE]** Implemented `src/data/splits.py` — 5-fold MultilabelStratifiedKFold + 15% holdout, patient-aware
 - **[P4 DONE]** Upgraded `src/phase2/augmentation.py` & `config.yaml` — ±10° via `A.Affine`, added ElasticTransform, GaussNoise, GridDistortion, Perspective (Albumentations 2.x clean, no warnings)
 - **[P5 DONE]** Created `src/phase2/loss.py` — AdaptiveWingLoss (Wang et al. ICCV 2019); wired into `src/phase2/train.py` replacing MSELoss

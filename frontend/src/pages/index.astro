@@ -27,14 +27,11 @@ import '../styles/global.css';
 
     <header class="bg-white dark:bg-slate-900 border-b border-slate-200 dark:border-slate-800/70 z-50 transition-colors duration-300 relative">
       <div class="max-w-[1600px] w-full mx-auto px-6 h-[72px] flex items-center justify-between">
-        <div class="flex items-center gap-3">
-          <div class="w-8 h-8 rounded-lg bg-singapodent-primary dark:bg-singapodent-accent flex items-center justify-center">
-             <svg class="w-5 h-5 text-white" fill="currentColor" viewBox="0 0 24 24"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-1 15h-2v-2h2v2zm0-4h-2V7h2v6z"/></svg>
+        <div class="flex items-center gap-3 group cursor-default">
+          <div class="dark:bg-white/95 dark:px-3 dark:py-1.5 dark:rounded-xl transition-all duration-300 dark:shadow-md flex items-center justify-center">
+            <img src="/logo.webp" alt="Singapodent Logo" class="h-8 md:h-10 w-auto object-contain transition-transform duration-300 group-hover:scale-[1.02] drop-shadow-sm" />
           </div>
-          <h1 class="text-2xl tracking-tighter">
-            <span class="font-extrabold text-singapodent-primary dark:text-white">SINGAPODENT</span>
-            <span class="font-light text-singapodent-accent ml-2">AI Dashboard</span>
-          </h1>
+          <span class="font-light text-singapodent-accent text-xs md:text-sm tracking-wide uppercase border-l border-slate-200 dark:border-slate-800 pl-3 self-center hidden sm:inline">AI Dashboard</span>
         </div>
         <div class="flex items-center space-x-4">
           <ThemeToggle client:load />
