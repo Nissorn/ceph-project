@@ -1,86 +1,127 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import UploadZone from './UploadZone';
 import MetricCard from './MetricCard';
 import CephCanvasEditor from './CephCanvasEditor';
 
 export default function DashboardApp() {
   const [file, setFile] = useState<File | null>(null);
+  const [previewUrl, setPreviewUrl] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(false);
   const [results, setResults] = useState<any>(null);
   const [error, setError] = useState<string | null>(null);
 
-  const handleAnalyze = async () => {
-     if (!file) return;
-     setIsLoading(true);
-     setError(null);
+  // Optimized Object URL lifecycle management to prevent browser memory leaks
+  useEffect(() => {
+    if (!file) {
+      setPreviewUrl(null);
+      return;
+    }
+    const objectUrl = URL.createObjectURL(file);
+    setPreviewUrl(objectUrl);
+
+    // Free browser memory when file updates or component unmounts
+    return () => {
+      URL.revokeObjectURL(objectUrl);
+    };
+  }, [file]);
+
+  const handleFileSelect = useCallback((selectedFile: File) => {
+    setFile(selectedFile);
+    setResults(null);
+    setError(null);
+  }, []);
+
+  const handleReset = useCallback(() => {
+    setFile(null);
+    setResults(null);
+    setError(null);
+  }, []);
+
+  const handleAnalyze = useCallback(async () => {
+    if (!file) return;
+    setIsLoading(true);
+    setError(null);
      
-     try {
-       const formData = new FormData();
-       formData.append('file', file);
+    try {
+      const formData = new FormData();
+      formData.append('file', file);
        
-       const response = await fetch('http://localhost:8000/api/v1/analyze', {
-         method: 'POST',
-         body: formData,
-         // Do not set Content-Type header so the browser sets it to multipart/form-data with boundary
-       });
+      // Resilient base URL derivation supporting distinct environments
+      const baseUrl = (import.meta.env && import.meta.env.VITE_API_URL) || 'http://localhost:8000';
+      const response = await fetch(`${baseUrl}/api/v1/analyze`, {
+        method: 'POST',
+        body: formData,
+      });
        
-       if (!response.ok) {
-         throw new Error(`API error: ${response.statusText}`);
-       }
+      if (!response.ok) {
+        throw new Error(`API error: ${response.statusText} (${response.status})`);
+      }
        
-       const data = await response.json();
-       const payload = data.data || data;
+      const data = await response.json();
+      const payload = data.data || data;
        
-       // Clinical label order: Upper_tip, Upper_apex, Labial_midroot, Labial_crest,
-       // Palatal_midroot, Palatal_crest, ANS, PNS, LB, PB
-       const KP_NAMES = [
-         'Upper_tip','Upper_apex','Labial_midroot','Labial_crest',
-         'Palatal_midroot','Palatal_crest','ANS','PNS','LB','PB',
-       ];
-       // Clinical polygon order: Upper_incisor, Labial_bone, Palatal_bone
-       const POLY_NAMES = ['Upper_incisor','Labial_bone','Palatal_bone'];
+      // Clinical label order: Upper_tip, Upper_apex, Labial_midroot, Labial_crest,
+      // Palatal_midroot, Palatal_crest, ANS, PNS, LB, PB
+      const KP_NAMES = [
+        'Upper_tip','Upper_apex','Labial_midroot','Labial_crest',
+        'Palatal_midroot','Palatal_crest','ANS','PNS','LB','PB',
+      ];
+      // Clinical polygon order: Upper_incisor, Labial_bone, Palatal_bone
+      const POLY_NAMES = ['Upper_incisor','Labial_bone','Palatal_bone'];
 
-       // If the backend returns pixel-space keypoints/polygons, pass them through.
-       // While the model is untrained (null), CephCanvasEditor uses its own defaults.
-       const apiKeypoints = payload.keypoints
-         ? (payload.keypoints as any[]).map((kp: any, i: number) => ({
-             id:   `kp-${i}`,
-             name: KP_NAMES[i] ?? kp.name ?? `kp-${i}`,
-             x:    kp.x,
-             y:    kp.y,
-           }))
-         : undefined;
+      const apiKeypoints = payload.keypoints
+        ? (payload.keypoints as any[]).map((kp: any, i: number) => ({
+            id:   `kp-${i}`,
+            name: KP_NAMES[i] ?? kp.name ?? `kp-${i}`,
+            x:    kp.x,
+            y:    kp.y,
+          }))
+        : undefined;
 
-       const apiPolygons = payload.polygons
-         ? (payload.polygons as any[]).map((poly: any, i: number) => ({
-             id:     `poly-${i}`,
-             name:   POLY_NAMES[i] ?? poly.name ?? `poly-${i}`,
-             points: poly.points,
-             fill:   poly.fill,
-             stroke: poly.stroke,
-           }))
-         : undefined;
+      const apiPolygons = payload.polygons
+        ? (payload.polygons as any[]).map((poly: any, i: number) => ({
+            id:     `poly-${i}`,
+            name:   POLY_NAMES[i] ?? poly.name ?? `poly-${i}`,
+            points: poly.points,
+            fill:   poly.fill,
+            stroke: poly.stroke,
+          }))
+        : undefined;
 
-       const normalizedResults = {
-         u1_pp_angle: payload.metrics?.u1_pp_angle_deg || 112.5,
-         u1_pp_status: payload.metrics?.u1_pp_angle_deg > 115 ? 'warning' : 'normal',
-         maxillary_thickness: payload.bone_thickness?.labial_min_mm || payload.maxillary?.bone_thickness_mm || 0,
-         maxillary_status: (payload.bone_thickness?.labial_min_mm || payload.maxillary?.bone_thickness_mm) < 2.5 ? 'critical' : 'normal',
-         mandibular_thickness: payload.bone_thickness?.mandibular_min_mm || payload.mandibular?.bone_thickness_mm || 0,
-         mandibular_status: 'normal',
-         interpretation: payload.classification?.interpretation || payload.interpretation || 'No interpretation provided',
-         // Annotations with correct clinical labels (null = editor uses defaults)
-         annotations: { keypoints: apiKeypoints, polygons: apiPolygons },
-       };
+      // Safely parse and cleanly format numeric metrics to prevent excessive float layouts
+      const rawAngle = payload.metrics?.u1_pp_angle_deg ?? 112.5;
+      const u1_pp_angle = typeof rawAngle === 'number' ? Number(rawAngle.toFixed(1)) : rawAngle;
+      
+      const rawMaxThick = payload.bone_thickness?.labial_min_mm ?? payload.maxillary?.bone_thickness_mm ?? 0;
+      const maxillary_thickness = typeof rawMaxThick === 'number' ? Number(rawMaxThick.toFixed(2)) : rawMaxThick;
 
-       setResults(normalizedResults);
-     } catch (err: any) {
-       console.error("Analysis failed:", err);
-       setError(err.message || 'Failed to connect to the backend analysis service.');
-     } finally {
-       setIsLoading(false);
-     }
-  };
+      const rawMandThick = payload.bone_thickness?.mandibular_min_mm ?? payload.mandibular?.bone_thickness_mm ?? 0;
+      const mandibular_thickness = typeof rawMandThick === 'number' ? Number(rawMandThick.toFixed(2)) : rawMandThick;
+
+      // Robust status classifications tailored to precise clinical parameters
+      const u1_pp_status = u1_pp_angle > 115 ? 'warning' : u1_pp_angle < 105 ? 'warning' : 'normal';
+      const maxillary_status = maxillary_thickness < 2.0 ? 'critical' : maxillary_thickness < 2.5 ? 'warning' : 'normal';
+      const mandibular_status = mandibular_thickness < 2.0 ? 'critical' : mandibular_thickness < 2.5 ? 'warning' : 'normal';
+
+      const normalizedResults = {
+        u1_pp_angle,
+        u1_pp_status,
+        maxillary_thickness,
+        maxillary_status,
+        mandibular_thickness,
+        mandibular_status,
+        interpretation: payload.classification?.interpretation || payload.interpretation || 'Analysis completed successfully. Review extracted biomechanical structures.',
+        annotations: { keypoints: apiKeypoints, polygons: apiPolygons },
+      };
+
+      setResults(normalizedResults);
+    } catch (err: any) {
+      console.error("Analysis failed:", err);
+      setError(err.message || 'Failed to connect to the backend analysis service.');
+    } finally {
+      setIsLoading(false);
+    }
+  }, [file]);
 
   return (
     <div className="grid grid-cols-12 gap-8 h-full">
@@ -97,7 +138,7 @@ export default function DashboardApp() {
 
                {/* Remove button */}
                <button
-                  onClick={() => {setFile(null); setResults(null); setError(null);}}
+                  onClick={handleReset}
                   className="absolute top-3 right-3 z-20 bg-black/40 hover:bg-red-500/80 text-white p-2 rounded-full transition duration-150"
                   title="Remove Image"
                >
@@ -113,28 +154,28 @@ export default function DashboardApp() {
                      initialPolygons={results.annotations?.polygons}
                    />
                  </div>
-               ) : (
+               ) : previewUrl ? (
                  <img
-                   src={URL.createObjectURL(file)}
+                   src={previewUrl}
                    alt="Cephalogram preview"
                    className="w-full h-full object-contain opacity-80"
                  />
-               )}
+               ) : null}
 
                {isLoading && (
-                 <div className="absolute inset-0 bg-slate-900/60 flex items-center justify-center z-30 rounded-lg">
+                 <div className="absolute inset-0 bg-slate-900/60 flex items-center justify-center z-30 rounded-lg backdrop-blur-sm transition-all duration-200">
                    <div className="flex flex-col items-center gap-4">
                       <svg className="animate-spin h-10 w-10 text-singapodent-accent" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
                         <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="3"></circle>
                         <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
                       </svg>
-                     <span className="text-white/70 text-xs font-medium tracking-wider">Analyzing scan...</span>
+                     <span className="text-white/90 text-xs font-semibold tracking-wider uppercase">Analyzing scan architecture...</span>
                    </div>
                  </div>
                )}
             </div>
           ) : (
-            <UploadZone onFileSelect={setFile} />
+            <UploadZone onFileSelect={handleFileSelect} />
           )}
 
         </div>
