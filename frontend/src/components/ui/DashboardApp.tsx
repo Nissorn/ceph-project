@@ -42,6 +42,10 @@ export default function DashboardApp() {
     setIsLoading(true);
     setError(null);
      
+    // Deterministic network timeout protection via AbortController
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 35000); // 35 seconds max boundary
+
     try {
       const formData = new FormData();
       formData.append('file', file);
@@ -51,14 +55,29 @@ export default function DashboardApp() {
       const response = await fetch(`${baseUrl}/api/v1/analyze`, {
         method: 'POST',
         body: formData,
+        signal: controller.signal,
       });
        
       if (!response.ok) {
-        throw new Error(`API error: ${response.statusText} (${response.status})`);
+        // Attempt to extract downstream structured JSON error safely
+        let serverErrorMsg = '';
+        try {
+          const errorJson = await response.json();
+          serverErrorMsg = errorJson?.detail || errorJson?.message || errorJson?.error || '';
+        } catch (_) {
+          // Non-JSON failure response (e.g. 502/504 gateway timeouts)
+        }
+        throw new Error(serverErrorMsg ? `Server Error: ${serverErrorMsg}` : `HTTP Request Failed (${response.status})`);
       }
        
-      const data = await response.json();
-      const payload = data.data || data;
+      let data;
+      try {
+        data = await response.json();
+      } catch (jsonErr) {
+        throw new Error('Received malformed response payload from the analysis server.');
+      }
+
+      const payload = data?.data || data || {};
        
       // Clinical label order: Upper_tip, Upper_apex, Labial_midroot, Labial_crest,
       // Palatal_midroot, Palatal_crest, ANS, PNS, LB, PB
@@ -69,34 +88,34 @@ export default function DashboardApp() {
       // Clinical polygon order: Upper_incisor, Labial_bone, Palatal_bone
       const POLY_NAMES = ['Upper_incisor','Labial_bone','Palatal_bone'];
 
-      const apiKeypoints = payload.keypoints
-        ? (payload.keypoints as any[]).map((kp: any, i: number) => ({
+      const apiKeypoints = Array.isArray(payload.keypoints)
+        ? payload.keypoints.map((kp: any, i: number) => ({
             id:   `kp-${i}`,
-            name: KP_NAMES[i] ?? kp.name ?? `kp-${i}`,
-            x:    kp.x,
-            y:    kp.y,
+            name: KP_NAMES[i] ?? kp?.name ?? `kp-${i}`,
+            x:    Number(kp?.x ?? 0),
+            y:    Number(kp?.y ?? 0),
           }))
         : undefined;
 
-      const apiPolygons = payload.polygons
-        ? (payload.polygons as any[]).map((poly: any, i: number) => ({
+      const apiPolygons = Array.isArray(payload.polygons)
+        ? payload.polygons.map((poly: any, i: number) => ({
             id:     `poly-${i}`,
-            name:   POLY_NAMES[i] ?? poly.name ?? `poly-${i}`,
-            points: poly.points,
-            fill:   poly.fill,
-            stroke: poly.stroke,
+            name:   POLY_NAMES[i] ?? poly?.name ?? `poly-${i}`,
+            points: Array.isArray(poly?.points) ? poly.points : [],
+            fill:   poly?.fill || 'rgba(59, 130, 246, 0.2)',
+            stroke: poly?.stroke || 'rgba(59, 130, 246, 0.8)',
           }))
         : undefined;
 
       // Safely parse and cleanly format numeric metrics to prevent excessive float layouts
       const rawAngle = payload.metrics?.u1_pp_angle_deg ?? 112.5;
-      const u1_pp_angle = typeof rawAngle === 'number' ? Number(rawAngle.toFixed(1)) : rawAngle;
+      const u1_pp_angle = typeof rawAngle === 'number' && !isNaN(rawAngle) ? Number(rawAngle.toFixed(1)) : 112.5;
       
       const rawMaxThick = payload.bone_thickness?.labial_min_mm ?? payload.maxillary?.bone_thickness_mm ?? 0;
-      const maxillary_thickness = typeof rawMaxThick === 'number' ? Number(rawMaxThick.toFixed(2)) : rawMaxThick;
+      const maxillary_thickness = typeof rawMaxThick === 'number' && !isNaN(rawMaxThick) ? Number(rawMaxThick.toFixed(2)) : 0;
 
       const rawMandThick = payload.bone_thickness?.mandibular_min_mm ?? payload.mandibular?.bone_thickness_mm ?? 0;
-      const mandibular_thickness = typeof rawMandThick === 'number' ? Number(rawMandThick.toFixed(2)) : rawMandThick;
+      const mandibular_thickness = typeof rawMandThick === 'number' && !isNaN(rawMandThick) ? Number(rawMandThick.toFixed(2)) : 0;
 
       // Robust status classifications tailored to precise clinical parameters
       const u1_pp_status = u1_pp_angle > 115 ? 'warning' : u1_pp_angle < 105 ? 'warning' : 'normal';
@@ -110,15 +129,20 @@ export default function DashboardApp() {
         maxillary_status,
         mandibular_thickness,
         mandibular_status,
-        interpretation: payload.classification?.interpretation || payload.interpretation || 'Analysis completed successfully. Review extracted biomechanical structures.',
+        interpretation: payload.classification?.interpretation || payload.interpretation || payload.summary || 'Analysis completed successfully. Review extracted biomechanical structures below.',
         annotations: { keypoints: apiKeypoints, polygons: apiPolygons },
       };
 
       setResults(normalizedResults);
     } catch (err: any) {
       console.error("Analysis failed:", err);
-      setError(err.message || 'Failed to connect to the backend analysis service.');
+      if (err.name === 'AbortError') {
+        setError('Analysis request timed out after 35 seconds. Verify inference engine availability.');
+      } else {
+        setError(err.message || 'Failed to connect to the backend analysis service.');
+      }
     } finally {
+      clearTimeout(timeoutId);
       setIsLoading(false);
     }
   }, [file]);
@@ -182,13 +206,22 @@ export default function DashboardApp() {
         
         {/* Analyze Button */}
         <div className="shrink-0 mt-6 flex flex-col md:flex-row justify-between items-center gap-4">
-          <div className="text-red-500 font-semibold">{error && `Error: ${error}`}</div>
+          <div className="text-red-500 font-medium text-sm flex items-center gap-2">
+            {error && (
+              <>
+                <svg className="w-4 h-4 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                </svg>
+                <span>{error}</span>
+              </>
+            )}
+          </div>
           <button
             onClick={handleAnalyze}
             disabled={!file || isLoading}
-            className="w-full md:w-auto py-3.5 px-10 text-sm font-semibold bg-singapodent-accent text-singapodent-primary dark:text-white rounded-full shadow-sm hover:brightness-105 transition-all duration-150 disabled:opacity-40 disabled:cursor-not-allowed"
+            className="w-full md:w-auto py-3.5 px-10 text-sm font-semibold bg-singapodent-accent text-singapodent-primary dark:text-white rounded-full shadow-sm hover:brightness-105 transition-all duration-150 disabled:opacity-40 disabled:cursor-not-allowed focus:outline-none focus:ring-2 focus:ring-singapodent-accent/50"
           >
-            {isLoading ? 'Processing...' : 'Run AI Analysis'}
+            {isLoading ? 'Processing Inference...' : 'Run AI Analysis'}
           </button>
         </div>
 
@@ -213,7 +246,12 @@ export default function DashboardApp() {
           
           {error && !isLoading && (
             <div className="h-64 flex items-center justify-center border border-red-200 dark:border-red-800/50 bg-red-50/80 dark:bg-red-900/10 rounded-xl px-8 text-center text-red-500">
-              An error occurred connecting to the analysis engine. Please try again.
+              <div className="flex flex-col items-center gap-2">
+                <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+                </svg>
+                <span className="text-sm font-medium">Inference connection failed. Please ensure backend services are active.</span>
+              </div>
             </div>
           )}
 
@@ -230,13 +268,33 @@ export default function DashboardApp() {
           )}
 
           {results && !isLoading && (
-            <div className="flex flex-col gap-5">
-              <MetricCard title="U1-PP Angle" value={`${results.u1_pp_angle}°`} status={results.u1_pp_status} />
-              <MetricCard title="Maxillary Bone" value={`${results.maxillary_thickness} mm`} status={results.maxillary_status} />
-              <MetricCard title="Mandibular Bone" value={`${results.mandibular_thickness} mm`} status={results.mandibular_status} />
-              <div className="mt-2 p-5 bg-singapodent-primary/5 dark:bg-singapodent-primary/15 border border-singapodent-primary/15 dark:border-singapodent-primary/20 rounded-xl overflow-hidden">
-                 <h4 className="text-xs font-semibold uppercase text-singapodent-primary dark:text-singapodent-accent mb-3 tracking-wider">Clinical Interpretation</h4>
-                 <p className="text-sm text-slate-700 dark:text-slate-200 leading-relaxed">
+            <div className="flex flex-col gap-5 animate-fade-in">
+              <MetricCard 
+                title="U1-PP Angle" 
+                value={results.u1_pp_angle} 
+                subtitle="° Degrees" 
+                status={results.u1_pp_status} 
+              />
+              <MetricCard 
+                title="Maxillary Bone" 
+                value={results.maxillary_thickness} 
+                subtitle="mm" 
+                status={results.maxillary_status} 
+              />
+              <MetricCard 
+                title="Mandibular Bone" 
+                value={results.mandibular_thickness} 
+                subtitle="mm" 
+                status={results.mandibular_status} 
+              />
+              <div className="mt-2 p-5 bg-singapodent-primary/5 dark:bg-singapodent-primary/15 border border-singapodent-primary/15 dark:border-singapodent-primary/20 rounded-xl overflow-hidden shadow-sm">
+                 <h4 className="text-xs font-semibold uppercase text-singapodent-primary dark:text-singapodent-accent mb-3 tracking-wider flex items-center gap-2">
+                   <svg className="w-4 h-4 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
+                   </svg>
+                   Clinical Interpretation
+                 </h4>
+                 <p className="text-sm text-slate-700 dark:text-slate-200 leading-relaxed font-normal">
                    {results.interpretation}
                  </p>
               </div>
