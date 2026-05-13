@@ -14,7 +14,7 @@ export interface Keypoint {
 export interface PolygonShape {
   id: string;
   name: string;
-  points: number[]; // flat [x1,y1,x2,y2,...] in image-space pixels
+  points: number[]; // flat [x1,y1,...] image-space pixels
   fill: string;
   stroke: string;
 }
@@ -27,70 +27,60 @@ interface Props {
   onPolygonsChange?: (polys: PolygonShape[]) => void;
 }
 
-// ── Default landmark positions (normalized 0–1 for a typical lateral ceph) ───
+// ── Medical imaging colour palette ───────────────────────────────────────────
+
+const POLY_PALETTE = [
+  { fill: 'rgba(0,255,255,0.15)',  stroke: 'rgba(0,255,255,0.9)'  }, // Cyan    — Upper_incisor
+  { fill: 'rgba(255,0,255,0.15)', stroke: 'rgba(255,0,255,0.9)'  }, // Magenta — Labial_bone
+  { fill: 'rgba(0,255,128,0.15)', stroke: 'rgba(0,255,128,0.9)'  }, // Green   — Palatal_bone
+];
+
+const KP_RING_NORMAL   = '#ffff00';
+const KP_DOT_NORMAL    = '#ffffff';
+const KP_RING_SELECTED = '#ffffff';
+const KP_DOT_SELECTED  = '#ffff00';
+
+// ── Correct clinical landmark defaults (normalised 0–1 for lateral ceph) ─────
 
 const KP_DEFS: { name: string; fx: number; fy: number }[] = [
-  { name: 'Sella (S)',      fx: 0.35, fy: 0.26 },
-  { name: 'Nasion (N)',     fx: 0.56, fy: 0.25 },
-  { name: 'Orbitale (Or)',  fx: 0.66, fy: 0.34 },
-  { name: 'Porion (Po)',    fx: 0.24, fy: 0.34 },
-  { name: 'A-point',        fx: 0.56, fy: 0.52 },
-  { name: 'B-point',        fx: 0.49, fy: 0.65 },
-  { name: 'Pogonion (Pg)',  fx: 0.48, fy: 0.72 },
-  { name: 'Menton (Me)',    fx: 0.45, fy: 0.77 },
-  { name: 'ANS',            fx: 0.58, fy: 0.52 },
-  { name: 'PNS',            fx: 0.35, fy: 0.52 },
+  { name: 'Upper_tip',       fx: 0.62, fy: 0.56 },
+  { name: 'Upper_apex',      fx: 0.56, fy: 0.38 },
+  { name: 'Labial_midroot',  fx: 0.62, fy: 0.47 },
+  { name: 'Labial_crest',    fx: 0.62, fy: 0.54 },
+  { name: 'Palatal_midroot', fx: 0.51, fy: 0.47 },
+  { name: 'Palatal_crest',   fx: 0.51, fy: 0.54 },
+  { name: 'ANS',             fx: 0.57, fy: 0.52 },
+  { name: 'PNS',             fx: 0.35, fy: 0.52 },
+  { name: 'LB',              fx: 0.64, fy: 0.50 },
+  { name: 'PB',              fx: 0.49, fy: 0.50 },
 ];
 
-const POLY_DEFS: { name: string; fracs: number[]; fill: string; stroke: string }[] = [
-  {
-    name: 'Maxillary Bone',
-    fracs: [0.38,0.44, 0.60,0.44, 0.62,0.56, 0.36,0.56],
-    fill: 'rgba(255,100,100,0.18)',
-    stroke: '#ff6464',
-  },
-  {
-    name: 'Mandibular Bone',
-    fracs: [0.30,0.60, 0.55,0.60, 0.52,0.78, 0.38,0.80, 0.28,0.70],
-    fill: 'rgba(100,220,100,0.15)',
-    stroke: '#64dc64',
-  },
-  {
-    name: 'Cranial Base',
-    fracs: [0.18,0.15, 0.58,0.15, 0.58,0.36, 0.28,0.36],
-    fill: 'rgba(100,160,255,0.15)',
-    stroke: '#64a0ff',
-  },
+const POLY_DEFS: { name: string; fracs: number[] }[] = [
+  { name: 'Upper_incisor', fracs: [0.52,0.42, 0.64,0.42, 0.66,0.58, 0.50,0.58] },
+  { name: 'Labial_bone',   fracs: [0.58,0.40, 0.68,0.40, 0.70,0.52, 0.56,0.52] },
+  { name: 'Palatal_bone',  fracs: [0.44,0.44, 0.56,0.44, 0.56,0.58, 0.42,0.58] },
 ];
 
-function fracsToImageCoords(fracs: number[], w: number, h: number): number[] {
+function fracsToImg(fracs: number[], w: number, h: number): number[] {
   return fracs.map((v, i) => (i % 2 === 0 ? v * w : v * h));
 }
 
-// ── Geometry: nearest edge insertion ─────────────────────────────────────────
+// ── Geometry: nearest-edge insertion ─────────────────────────────────────────
 
 function nearestEdgeInsert(
-  points: number[],
-  cx: number,
-  cy: number
+  pts: number[], cx: number, cy: number
 ): { insertAt: number; px: number; py: number } {
-  const n = points.length / 2;
+  const n = pts.length / 2;
   let best = { insertAt: 2, px: 0, py: 0, dist: Infinity };
-
   for (let i = 0; i < n; i++) {
     const j = (i + 1) % n;
-    const ax = points[i * 2],     ay = points[i * 2 + 1];
-    const bx = points[j * 2],     by = points[j * 2 + 1];
-    const dx = bx - ax,           dy = by - ay;
-    const lenSq = dx * dx + dy * dy;
-    const t = lenSq === 0
-      ? 0
-      : Math.max(0, Math.min(1, ((cx - ax) * dx + (cy - ay) * dy) / lenSq));
-    const projX = ax + t * dx,    projY = ay + t * dy;
+    const ax = pts[i*2], ay = pts[i*2+1], bx = pts[j*2], by = pts[j*2+1];
+    const dx = bx - ax, dy = by - ay;
+    const lenSq = dx*dx + dy*dy;
+    const t = lenSq === 0 ? 0 : Math.max(0, Math.min(1, ((cx-ax)*dx + (cy-ay)*dy) / lenSq));
+    const projX = ax + t*dx, projY = ay + t*dy;
     const dist = Math.hypot(cx - projX, cy - projY);
-    if (dist < best.dist) {
-      best = { insertAt: j * 2, px: projX, py: projY, dist };
-    }
+    if (dist < best.dist) best = { insertAt: j*2, px: projX, py: projY, dist };
   }
   return best;
 }
@@ -98,21 +88,31 @@ function nearestEdgeInsert(
 // ── Component ─────────────────────────────────────────────────────────────────
 
 export default function CephCanvasEditor({
-  imageFile,
-  initialKeypoints,
-  initialPolygons,
-  onKeypointsChange,
-  onPolygonsChange,
+  imageFile, initialKeypoints, initialPolygons,
+  onKeypointsChange, onPolygonsChange,
 }: Props) {
-  const containerRef = useRef<HTMLDivElement>(null);
-  const [stageW, setStageW]     = useState(0);
-  const [stageH, setStageH]     = useState(0);
-  const [img, setImg]           = useState<HTMLImageElement | null>(null);
-  const [keypoints, setKeypoints] = useState<Keypoint[]>([]);
-  const [polygons, setPolygons]   = useState<PolygonShape[]>([]);
-  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const containerRef  = useRef<HTMLDivElement>(null);
+  const stageRef      = useRef<any>(null);
+  const scaleRef      = useRef(1);
+  const importFileRef = useRef<HTMLInputElement>(null);
 
-  // Load image from File object
+  const [stageW, setStageW]               = useState(0);
+  const [stageH, setStageH]               = useState(0);
+  const [img, setImg]                     = useState<HTMLImageElement | null>(null);
+  const [keypoints, setKeypoints]         = useState<Keypoint[]>([]);
+  const [polygons, setPolygons]           = useState<PolygonShape[]>([]);
+  const [selectedId, setSelectedId]       = useState<string | null>(null);
+  const [stageScale, setStageScale]       = useState(1);
+  const [showLandmarks, setShowLandmarks] = useState(true);
+  const [showPolygons, setShowPolygons]   = useState(true);
+  const [pointSize, setPointSize]         = useState(4);
+  const [debugInfo, setDebugInfo]         = useState({ x: 0, y: 0, imageX: 0, imageY: 0 });
+  const [isDebugMode, setIsDebugMode]     = useState(false);
+
+  // ── Sync stale-proof ref with state ──────────────────────────────────────────
+  useEffect(() => { scaleRef.current = stageScale; }, [stageScale]);
+
+  // ── Load image ───────────────────────────────────────────────────────────────
   useEffect(() => {
     const url = URL.createObjectURL(imageFile);
     const el  = new window.Image();
@@ -121,192 +121,266 @@ export default function CephCanvasEditor({
     return () => URL.revokeObjectURL(url);
   }, [imageFile]);
 
-  // Observe container for resize
+  // ── Observe container size ───────────────────────────────────────────────────
   useEffect(() => {
     const el = containerRef.current;
     if (!el) return;
-    const ro = new ResizeObserver(() => {
-      setStageW(el.offsetWidth);
-      setStageH(el.offsetHeight);
-    });
+    const ro = new ResizeObserver(() => { setStageW(el.offsetWidth); setStageH(el.offsetHeight); });
     ro.observe(el);
     setStageW(el.offsetWidth);
     setStageH(el.offsetHeight);
     return () => ro.disconnect();
   }, []);
 
-  // Initialise shapes when image first loads
+  // ── Block passive browser scroll over canvas ─────────────────────────────────
+  useEffect(() => {
+    const el = containerRef.current;
+    if (!el) return;
+    const block = (e: WheelEvent) => e.preventDefault();
+    el.addEventListener('wheel', block, { passive: false });
+    return () => el.removeEventListener('wheel', block);
+  }, []);
+
+  // ── Init shapes when image loads ─────────────────────────────────────────────
   useEffect(() => {
     if (!img) return;
     const { width: w, height: h } = img;
-
     setKeypoints(
       initialKeypoints ??
-        KP_DEFS.map((def, i) => ({
-          id:   `kp-${i}`,
-          name: def.name,
-          x:    def.fx * w,
-          y:    def.fy * h,
-        }))
+        KP_DEFS.map((d, i) => ({ id: `kp-${i}`, name: d.name, x: d.fx * w, y: d.fy * h }))
     );
-
     setPolygons(
       initialPolygons ??
-        POLY_DEFS.map((def, i) => ({
+        POLY_DEFS.map((d, i) => ({
           id:     `poly-${i}`,
-          name:   def.name,
-          points: fracsToImageCoords(def.fracs, w, h),
-          fill:   def.fill,
-          stroke: def.stroke,
+          name:   d.name,
+          points: fracsToImg(d.fracs, w, h),
+          fill:   POLY_PALETTE[i % POLY_PALETTE.length].fill,
+          stroke: POLY_PALETTE[i % POLY_PALETTE.length].stroke,
         }))
     );
   }, [img]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Compute fit-to-stage transform
-  const { offX, offY, scale } = useMemo(() => {
-    if (!img || stageW === 0 || stageH === 0) return { offX: 0, offY: 0, scale: 1 };
+  // ── Fit-to-stage transform (content / Layer coordinates) ─────────────────────
+  const { offX, offY, fitScale } = useMemo(() => {
+    if (!img || stageW === 0 || stageH === 0) return { offX: 0, offY: 0, fitScale: 1 };
     const s = Math.min(stageW / img.width, stageH / img.height);
-    return {
-      scale: s,
-      offX:  (stageW - img.width  * s) / 2,
-      offY:  (stageH - img.height * s) / 2,
-    };
+    return { fitScale: s, offX: (stageW - img.width * s) / 2, offY: (stageH - img.height * s) / 2 };
   }, [img, stageW, stageH]);
 
-  // Coordinate converters
-  const toStage = useCallback(
-    (ix: number, iy: number): [number, number] => [ix * scale + offX, iy * scale + offY],
-    [scale, offX, offY]
+  const toContent = useCallback(
+    (ix: number, iy: number): [number, number] => [ix * fitScale + offX, iy * fitScale + offY],
+    [fitScale, offX, offY]
   );
   const toImage = useCallback(
-    (sx: number, sy: number): [number, number] => [(sx - offX) / scale, (sy - offY) / scale],
-    [scale, offX, offY]
+    (cx: number, cy: number): [number, number] => [(cx - offX) / fitScale, (cy - offY) / fitScale],
+    [fitScale, offX, offY]
   );
 
-  // Propagate changes upward
-  useEffect(() => { onKeypointsChange?.(keypoints); }, [keypoints]);  // eslint-disable-line
-  useEffect(() => { onPolygonsChange?.(polygons); },   [polygons]);   // eslint-disable-line
+  // ── Propagate changes upward ──────────────────────────────────────────────────
+  useEffect(() => { onKeypointsChange?.(keypoints); }, [keypoints]); // eslint-disable-line
+  useEffect(() => { onPolygonsChange?.(polygons); },   [polygons]);  // eslint-disable-line
 
-  // ── Keypoint drag ────────────────────────────────────────────────────────────
+  // ── Zoom (mouse wheel) ───────────────────────────────────────────────────────
+  const handleWheel = useCallback((e: KonvaEventObject<WheelEvent>) => {
+    e.evt.preventDefault();
+    const stage = stageRef.current;
+    if (!stage) return;
+    const oldScale = scaleRef.current;
+    const pointer  = stage.getPointerPosition()!;
+    const mouseAt  = {
+      x: (pointer.x - (stage.x() as number)) / oldScale,
+      y: (pointer.y - (stage.y() as number)) / oldScale,
+    };
+    const direction = e.evt.deltaY < 0 ? 1 : -1;
+    const newScale  = Math.max(1.0, Math.min(12, oldScale * Math.pow(1.08, direction)));
+    scaleRef.current = newScale;
+    setStageScale(newScale);
+    if (newScale <= 1.0) {
+      stage.position({ x: 0, y: 0 });
+    } else {
+      stage.position({
+        x: pointer.x - mouseAt.x * newScale,
+        y: pointer.y - mouseAt.y * newScale,
+      });
+    }
+  }, []);
+
+  const resetZoom = useCallback(() => {
+    scaleRef.current = 1;
+    setStageScale(1);
+    stageRef.current?.position({ x: 0, y: 0 });
+  }, []);
+
+  // ── Shape event handlers ──────────────────────────────────────────────────────
+
   const moveKp = useCallback((id: string, e: KonvaEventObject<DragEvent>) => {
     const [ix, iy] = toImage(e.target.x(), e.target.y());
-    setKeypoints(prev => prev.map(k => (k.id === id ? { ...k, x: ix, y: iy } : k)));
+    console.log(`[CephEditor] onDragEnd "${id}" → image x:${ix.toFixed(2)}, y:${iy.toFixed(2)}`);
+    setKeypoints(prev => prev.map(k => k.id === id ? { ...k, x: ix, y: iy } : k));
   }, [toImage]);
 
-  // ── Polygon vertex drag (live update of the Line) ────────────────────────────
-  const moveVertex = useCallback(
-    (polyId: string, vi: number, e: KonvaEventObject<DragEvent>) => {
-      const [ix, iy] = toImage(e.target.x(), e.target.y());
-      setPolygons(prev =>
-        prev.map(p => {
-          if (p.id !== polyId) return p;
-          const pts = [...p.points];
-          pts[vi * 2]     = ix;
-          pts[vi * 2 + 1] = iy;
-          return { ...p, points: pts };
-        })
-      );
-    },
-    [toImage]
-  );
+  const moveVertex = useCallback((polyId: string, vi: number, e: KonvaEventObject<DragEvent>) => {
+    const [ix, iy] = toImage(e.target.x(), e.target.y());
+    setPolygons(prev => prev.map(p => {
+      if (p.id !== polyId) return p;
+      const pts = [...p.points];
+      pts[vi*2] = ix; pts[vi*2+1] = iy;
+      return { ...p, points: pts };
+    }));
+  }, [toImage]);
 
-  // ── Delete vertex (Dbl-Click OR Alt+Click) ───────────────────────────────────
-  const deleteVertex = useCallback(
-    (polyId: string, vi: number, e: KonvaEventObject<MouseEvent>) => {
-      e.cancelBubble = true;
-      setPolygons(prev =>
-        prev.map(p => {
-          if (p.id !== polyId || p.points.length <= 6) return p; // min 3 vertices
-          const pts = [...p.points];
-          pts.splice(vi * 2, 2);
-          return { ...p, points: pts };
-        })
-      );
-    },
-    []
-  );
-
-  // ── Add vertex at nearest edge (Shift+Click on Line) ────────────────────────
-  const addEdgePoint = useCallback(
-    (polyId: string, e: KonvaEventObject<MouseEvent>) => {
-      if (!e.evt.shiftKey) return;
-      e.cancelBubble = true;
-      const pos = e.target.getStage()!.getPointerPosition()!;
-      const [ix, iy] = toImage(pos.x, pos.y);
-      setPolygons(prev =>
-        prev.map(p => {
-          if (p.id !== polyId) return p;
-          const { insertAt, px, py } = nearestEdgeInsert(p.points, ix, iy);
-          const pts = [...p.points];
-          pts.splice(insertAt, 0, px, py);
-          return { ...p, points: pts };
-        })
-      );
-    },
-    [toImage]
-  );
-
-  // Cursor helpers
-  const setCursor = useCallback((e: KonvaEventObject<MouseEvent>, cur: string) => {
-    const stage = e.target.getStage();
-    if (stage) stage.container().style.cursor = cur;
+  const deleteVertex = useCallback((polyId: string, vi: number, e: KonvaEventObject<MouseEvent>) => {
+    e.cancelBubble = true;
+    setPolygons(prev => prev.map(p => {
+      if (p.id !== polyId || p.points.length <= 6) return p;
+      const pts = [...p.points];
+      pts.splice(vi*2, 2);
+      return { ...p, points: pts };
+    }));
   }, []);
+
+  const addEdgePoint = useCallback((polyId: string, e: KonvaEventObject<MouseEvent>) => {
+    if (!e.evt.shiftKey) return;
+    e.cancelBubble = true;
+    const stage = stageRef.current;
+    if (!stage) return;
+    const raw      = stage.getPointerPosition()!;
+    const sz       = scaleRef.current;
+    const cx       = (raw.x - (stage.x() as number)) / sz;
+    const cy       = (raw.y - (stage.y() as number)) / sz;
+    const [ix, iy] = toImage(cx, cy);
+    setPolygons(prev => prev.map(p => {
+      if (p.id !== polyId) return p;
+      const { insertAt, px, py } = nearestEdgeInsert(p.points, ix, iy);
+      const pts = [...p.points];
+      pts.splice(insertAt, 0, px, py);
+      return { ...p, points: pts };
+    }));
+  }, [toImage]);
+
+  const setCursor = useCallback((e: KonvaEventObject<MouseEvent>, cur: string) => {
+    e.target.getStage()?.container().style.setProperty('cursor', cur);
+  }, []);
+
+  // ── Debug overlay: screen → image coordinate tracer ──────────────────────────
+  const handleMouseMove = useCallback((e: KonvaEventObject<MouseEvent>) => {
+    const stage = stageRef.current;
+    if (!stage) return;
+    const raw = stage.getPointerPosition();
+    if (!raw) return;
+    const sz = scaleRef.current;
+    // screen → content space (undo stage pan + scale)
+    const cx = (raw.x - (stage.x() as number)) / sz;
+    const cy = (raw.y - (stage.y() as number)) / sz;
+    // content → image space (undo fit-scale + letterbox offset)
+    const [ix, iy] = toImage(cx, cy);
+    setDebugInfo({ x: Math.round(raw.x), y: Math.round(raw.y), imageX: Math.round(ix), imageY: Math.round(iy) });
+  }, [toImage]);
 
   const selectedName = useMemo(
     () => [...keypoints, ...polygons].find(s => s.id === selectedId)?.name,
     [selectedId, keypoints, polygons]
   );
 
-  return (
-    <div className="flex flex-col w-full h-full">
-      {/* ── Toolbar ─────────────────────────────────────────────────────────── */}
-      <div className="shrink-0 flex flex-wrap items-center gap-x-3 gap-y-1 px-3 py-1.5 bg-slate-900/95 text-[11px] text-slate-400 rounded-t-2xl select-none border-b border-slate-700/50">
-        <span className="font-bold text-orange-400 mr-1">Ceph Editor</span>
-        <span className="hidden sm:inline text-slate-600">|</span>
-        <span><kbd className="bg-slate-700/80 text-slate-200 px-1.5 py-0.5 rounded text-[10px] font-mono">Drag</kbd> vertex to move</span>
-        <span><kbd className="bg-slate-700/80 text-slate-200 px-1.5 py-0.5 rounded text-[10px] font-mono">Shift+Click</kbd> edge → add point</span>
-        <span><kbd className="bg-slate-700/80 text-slate-200 px-1.5 py-0.5 rounded text-[10px] font-mono">Dbl-Click</kbd> / <kbd className="bg-slate-700/80 text-slate-200 px-1.5 py-0.5 rounded text-[10px] font-mono">Alt+Click</kbd> vertex → delete</span>
-        {selectedName && (
-          <span className="ml-auto text-orange-300 font-mono truncate max-w-[160px]" title={selectedName}>
-            ● {selectedName}
-          </span>
-        )}
-      </div>
+  // ── Derived: are image coords outside the original image bounds? ─────────────
+  const imgOob = img
+    ? debugInfo.imageX < 0 || debugInfo.imageX > img.width
+      || debugInfo.imageY < 0 || debugInfo.imageY > img.height
+    : false;
 
-      {/* ── Canvas ─────────────────────────────────────────────────────────── */}
-      <div ref={containerRef} className="flex-1 min-h-0 bg-slate-950 rounded-b-2xl overflow-hidden">
+  // ── Export / Import JSON (round-trip test) ────────────────────────────────────
+  const handleExport = useCallback(() => {
+    if (!img) return;
+    const payload = {
+      version: 1,
+      imageName: imageFile.name,
+      imageWidth: img.width,
+      imageHeight: img.height,
+      keypoints,
+      polygons,
+    };
+    const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' });
+    const url  = URL.createObjectURL(blob);
+    const a    = document.createElement('a');
+    a.href     = url;
+    a.download = 'ceph-debug-export.json';
+    a.click();
+    URL.revokeObjectURL(url);
+  }, [img, imageFile, keypoints, polygons]);
+
+  const handleImportFile = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = (ev) => {
+      try {
+        const data = JSON.parse(ev.target?.result as string);
+        if (!Array.isArray(data.keypoints) || !Array.isArray(data.polygons)) {
+          console.error('[CephEditor] Import failed: missing keypoints or polygons arrays');
+          return;
+        }
+        if (img && (data.imageWidth !== img.width || data.imageHeight !== img.height)) {
+          console.warn(`[CephEditor] Import dimension mismatch: file=${data.imageWidth}×${data.imageHeight} current=${img.width}×${img.height}`);
+        }
+        setKeypoints(data.keypoints);
+        setPolygons(data.polygons);
+        console.log(`[CephEditor] Import OK — ${data.keypoints.length} keypoints, ${data.polygons.length} polygons`);
+      } catch (err) {
+        console.error('[CephEditor] Import parse error:', err);
+      }
+    };
+    reader.readAsText(file);
+    e.target.value = '';
+  }, [img]);
+
+  // ── Toolbar kbd chip ──────────────────────────────────────────────────────────
+  const chip = 'bg-white/10 border border-white/20 text-white/80 px-1.5 py-0.5 rounded font-mono text-[10px]';
+
+  return (
+    <div className="w-full h-full border border-slate-200 dark:border-slate-700 rounded-xl overflow-hidden">
+
+      {/* ── Canvas container (fills all space, anchors floating toolbar) ──── */}
+      <div ref={containerRef} className="relative w-full h-full overflow-hidden bg-slate-950">
+
         {img && stageW > 0 && stageH > 0 && (
           <Stage
+            ref={stageRef}
             width={stageW}
             height={stageH}
-            onClick={(e) => {
-              if (e.target === e.target.getStage()) setSelectedId(null);
-            }}
+            scaleX={stageScale}
+            scaleY={stageScale}
+            draggable
+            onWheel={handleWheel}
+            onClick={(e) => { if (e.target === e.target.getStage()) setSelectedId(null); }}
+            onMouseEnter={(e) => setCursor(e, 'grab')}
+            onMouseLeave={(e) => setCursor(e, 'default')}
+            onMouseDown={(e) => { if (e.target === e.target.getStage()) setCursor(e, 'grabbing'); }}
+            onMouseUp={(e) => setCursor(e, 'grab')}
+            onMouseMove={handleMouseMove}
           >
             <Layer>
-              {/* Background X-ray image */}
+              {/* X-ray image */}
               <KonvaImage
                 image={img}
-                x={offX}
-                y={offY}
-                width={img.width  * scale}
-                height={img.height * scale}
+                x={offX} y={offY}
+                width={img.width * fitScale}
+                height={img.height * fitScale}
                 listening={false}
               />
 
               {/* ── Polygons ──────────────────────────────────────────────── */}
-              {polygons.map((poly) => {
+              {showPolygons && polygons.map((poly) => {
                 const stagePts: number[] = [];
                 for (let i = 0; i < poly.points.length; i += 2) {
-                  const [sx, sy] = toStage(poly.points[i], poly.points[i + 1]);
-                  stagePts.push(sx, sy);
+                  const [cx, cy] = toContent(poly.points[i], poly.points[i+1]);
+                  stagePts.push(cx, cy);
                 }
-                const isSel       = selectedId === poly.id;
-                const vertexCount = poly.points.length / 2;
+                const isSel = selectedId === poly.id;
+                const nv    = poly.points.length / 2;
 
                 return (
                   <Group key={poly.id}>
-                    {/* Filled polygon outline — Shift+Click to add vertex */}
                     <Line
                       points={stagePts}
                       closed
@@ -314,56 +388,43 @@ export default function CephCanvasEditor({
                       stroke={isSel ? '#ffffff' : poly.stroke}
                       strokeWidth={isSel ? 2 : 1.5}
                       hitStrokeWidth={10}
-                      onClick={(e) => {
-                        setSelectedId(poly.id);
-                        addEdgePoint(poly.id, e);
-                      }}
+                      onClick={(e) => { setSelectedId(poly.id); addEdgePoint(poly.id, e); }}
                       onMouseEnter={(e) => setCursor(e, 'pointer')}
-                      onMouseLeave={(e) => setCursor(e, 'default')}
+                      onMouseLeave={(e) => setCursor(e, 'grab')}
                     />
-
-                    {/* Polygon name label */}
+                    {/* Polygon label — shadow replaces stroke for legibility */}
                     <Text
                       x={stagePts[0] ?? 0}
                       y={(stagePts[1] ?? 0) - 16}
                       text={poly.name}
-                      fontSize={11}
-                      fontStyle="bold"
-                      fill={poly.stroke}
-                      shadowColor="black"
-                      shadowBlur={4}
-                      shadowOpacity={1}
+                      fontSize={11} fontStyle="bold"
+                      fill="white"
+                      shadowColor="black" shadowBlur={4} shadowOpacity={1}
+                      shadowOffsetX={1} shadowOffsetY={1}
                       listening={false}
                     />
-
-                    {/* Vertex control points */}
-                    {Array.from({ length: vertexCount }, (_, vi) => {
-                      const [vx, vy] = toStage(
-                        poly.points[vi * 2],
-                        poly.points[vi * 2 + 1]
-                      );
+                    {/* Vertex handles */}
+                    {Array.from({ length: nv }, (_, vi) => {
+                      const [vx, vy] = toContent(poly.points[vi*2], poly.points[vi*2+1]);
                       return (
                         <Circle
                           key={vi}
-                          x={vx}
-                          y={vy}
-                          radius={isSel ? 6 : 5}
+                          x={vx} y={vy}
+                          radius={pointSize}
+                          hitStrokeWidth={20}
                           fill={isSel ? '#ffffff' : poly.stroke}
-                          stroke="rgba(0,0,0,0.6)"
+                          stroke={poly.stroke}
                           strokeWidth={1}
                           draggable
-                          // Live-update polygon as vertex is dragged
                           onDragMove={(e) => moveVertex(poly.id, vi, e)}
-                          // Delete vertex on double-click
                           onDblClick={(e) => deleteVertex(poly.id, vi, e)}
-                          // Delete vertex on Alt+Click; select polygon otherwise
                           onClick={(e) => {
                             setSelectedId(poly.id);
                             if (e.evt.altKey) deleteVertex(poly.id, vi, e);
                             e.cancelBubble = true;
                           }}
                           onMouseEnter={(e) => setCursor(e, 'crosshair')}
-                          onMouseLeave={(e) => setCursor(e, 'default')}
+                          onMouseLeave={(e) => setCursor(e, 'grab')}
                         />
                       );
                     })}
@@ -372,51 +433,31 @@ export default function CephCanvasEditor({
               })}
 
               {/* ── Keypoints ─────────────────────────────────────────────── */}
-              {keypoints.map((kp) => {
-                const [kx, ky] = toStage(kp.x, kp.y);
+              {showLandmarks && keypoints.map((kp) => {
+                const [kx, ky] = toContent(kp.x, kp.y);
                 const isSel    = selectedId === kp.id;
-                const color    = isSel ? '#ffe500' : '#ff9900';
-
                 return (
                   <Group key={kp.id}>
-                    {/* Outer ring (visual only) */}
                     <Circle
                       x={kx} y={ky}
-                      radius={9}
-                      fill="transparent"
-                      stroke={color}
-                      strokeWidth={1.5}
-                      listening={false}
-                    />
-                    {/* Inner dot */}
-                    <Circle
-                      x={kx} y={ky}
-                      radius={3}
-                      fill={color}
-                      listening={false}
-                    />
-                    {/* Invisible draggable hitbox covering the full landmark */}
-                    <Circle
-                      x={kx} y={ky}
-                      radius={10}
-                      fill="transparent"
-                      stroke="transparent"
+                      radius={pointSize}
+                      hitStrokeWidth={20}
+                      fill={isSel ? KP_DOT_SELECTED : KP_DOT_NORMAL}
+                      stroke={isSel ? KP_RING_SELECTED : KP_RING_NORMAL}
+                      strokeWidth={1}
                       draggable
                       onDragEnd={(e) => moveKp(kp.id, e)}
                       onClick={() => setSelectedId(kp.id)}
                       onMouseEnter={(e) => setCursor(e, 'move')}
-                      onMouseLeave={(e) => setCursor(e, 'default')}
+                      onMouseLeave={(e) => setCursor(e, 'grab')}
                     />
-                    {/* Label */}
+                    {/* Keypoint label — shadow replaces stroke for legibility */}
                     <Text
-                      x={kx + 12}
-                      y={ky - 6}
-                      text={kp.name}
-                      fontSize={10}
-                      fill="#ffc060"
-                      shadowColor="black"
-                      shadowBlur={3}
-                      shadowOpacity={0.9}
+                      x={kx + 8} y={ky - 6}
+                      text={kp.name} fontSize={10} fontStyle="bold"
+                      fill="white"
+                      shadowColor="black" shadowBlur={4} shadowOpacity={1}
+                      shadowOffsetX={1} shadowOffsetY={1}
                       listening={false}
                     />
                   </Group>
@@ -426,12 +467,155 @@ export default function CephCanvasEditor({
           </Stage>
         )}
 
-        {/* Loading state before image decodes */}
         {!img && (
           <div className="flex items-center justify-center h-full text-slate-500 text-sm">
             Loading image…
           </div>
         )}
+
+        {/* ── Dev panel (top-right): coord overlay + Export/Import ────────── */}
+        {img && isDebugMode && (
+          <div className="absolute top-3 right-3 z-50 flex flex-col gap-2 items-end">
+            {/* Coordinate overlay */}
+            <div className="bg-black/85 backdrop-blur-sm font-mono text-[11px] leading-relaxed px-3 py-2.5 rounded-lg border border-white/10 pointer-events-none select-none">
+              <div className="text-white/35 text-[9px] uppercase tracking-widest mb-1.5">Debug Coords</div>
+              <div className="flex items-center gap-3">
+                <span className="text-white/40 w-10 text-[10px]">Screen</span>
+                <span className="text-white tabular-nums">{debugInfo.x}, {debugInfo.y}</span>
+              </div>
+              <div className="flex items-center gap-3">
+                <span className="text-white/40 w-10 text-[10px]">Image</span>
+                <span className={`tabular-nums ${imgOob ? 'text-red-400' : 'text-green-400'}`}>
+                  {debugInfo.imageX}, {debugInfo.imageY}
+                  {imgOob && <span className="ml-1 text-red-400">⚠ OOB</span>}
+                </span>
+              </div>
+              <div className="text-white/25 text-[9px] mt-1.5 tabular-nums">
+                max {img.width} × {img.height} px
+              </div>
+            </div>
+            {/* Export / Import actions */}
+            <div className="bg-black/80 backdrop-blur-sm border border-amber-500/25 rounded-lg flex overflow-hidden text-[11px]">
+              <button
+                onClick={handleExport}
+                title="Export keypoints and polygons as JSON"
+                className="px-3 py-1.5 text-amber-300/80 hover:text-amber-200 hover:bg-amber-500/10 transition-colors"
+              >
+                Export JSON
+              </button>
+              <span className="w-px bg-white/10 self-stretch" />
+              <button
+                onClick={() => importFileRef.current?.click()}
+                title="Import keypoints and polygons from JSON"
+                className="px-3 py-1.5 text-amber-300/80 hover:text-amber-200 hover:bg-amber-500/10 transition-colors"
+              >
+                Import JSON
+              </button>
+            </div>
+          </div>
+        )}
+
+        {/* ── Floating glass pill toolbar ──────────────────────────────────── */}
+        {img && (
+          <div className="absolute bottom-6 left-1/2 -translate-x-1/2 bg-black/80 backdrop-blur-md text-white/90 px-6 py-3 rounded-full border border-white/10 flex gap-5 text-sm items-center shadow-2xl z-50">
+
+            {/* Instructions */}
+            <span className="flex items-center gap-1.5 text-xs text-white/60 whitespace-nowrap">
+              <kbd className={chip}>Drag</kbd> move
+              <span className="mx-0.5 text-white/20">·</span>
+              <kbd className={chip}>Scroll</kbd> zoom
+              <span className="mx-0.5 text-white/20">·</span>
+              <kbd className={chip}>⇧+Click</kbd> add pt
+              <span className="mx-0.5 text-white/20">·</span>
+              <kbd className={chip}>DblClick</kbd> del pt
+            </span>
+
+            <span className="text-white/20 select-none">|</span>
+
+            {/* Visibility toggles */}
+            <label className="flex items-center gap-1.5 cursor-pointer text-xs whitespace-nowrap select-none">
+              <input
+                type="checkbox" checked={showLandmarks}
+                onChange={(e) => setShowLandmarks(e.target.checked)}
+                className="accent-yellow-400 w-3 h-3"
+              />
+              Landmarks
+            </label>
+            <label className="flex items-center gap-1.5 cursor-pointer text-xs whitespace-nowrap select-none">
+              <input
+                type="checkbox" checked={showPolygons}
+                onChange={(e) => setShowPolygons(e.target.checked)}
+                className="accent-cyan-400 w-3 h-3"
+              />
+              Polygons
+            </label>
+
+            <span className="text-white/20 select-none">|</span>
+
+            {/* Point size slider */}
+            <label className="flex items-center gap-2 text-xs whitespace-nowrap select-none">
+              <span className="text-white/60">Point Size</span>
+              <input
+                type="range" min="1" max="10" step="0.5"
+                value={pointSize}
+                onChange={(e) => setPointSize(Number(e.target.value))}
+                className="w-20 accent-orange-400 cursor-pointer"
+              />
+              <span className="font-mono w-5 text-right text-white/80">{pointSize}</span>
+            </label>
+
+            {/* Zoom indicator */}
+            {stageScale > 1 && (
+              <>
+                <span className="text-white/20 select-none">|</span>
+                <button
+                  onClick={resetZoom}
+                  className="flex items-center gap-1 text-xs text-white/60 hover:text-white transition-colors whitespace-nowrap"
+                >
+                  {Math.round(stageScale * 100)}%
+                  <span className="text-white/30 text-[10px]">✕</span>
+                </button>
+              </>
+            )}
+
+            {/* Selected element name */}
+            {selectedName && (
+              <>
+                <span className="text-white/20 select-none">|</span>
+                <span className="font-mono text-xs text-cyan-300 truncate max-w-[120px]">
+                  ● {selectedName}
+                </span>
+              </>
+            )}
+
+            <span className="text-white/20 select-none">|</span>
+
+            {/* Debug mode toggle */}
+            <button
+              onClick={() => setIsDebugMode(v => !v)}
+              title={isDebugMode ? 'Hide debug tools' : 'Show debug tools'}
+              className={`text-xs px-2 py-0.5 rounded transition-colors whitespace-nowrap ${
+                isDebugMode
+                  ? 'bg-amber-500/30 text-amber-300 border border-amber-500/40'
+                  : 'text-white/40 hover:text-white/70'
+              }`}
+            >
+              Dev
+            </button>
+
+
+          </div>
+        )}
+
+        {/* Hidden file input for JSON import */}
+        <input
+          ref={importFileRef}
+          type="file"
+          accept=".json"
+          className="hidden"
+          onChange={handleImportFile}
+        />
+
       </div>
     </div>
   );

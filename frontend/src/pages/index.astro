@@ -4,19 +4,31 @@ import DashboardApp from '../components/ui/DashboardApp';
 import '../styles/global.css';
 ---
 
-<html lang="en">
+<html lang="en" class="dark">
   <head>
     <meta charset="utf-8" />
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
     <meta name="viewport" content="width=device-width" />
     <meta name="generator" content={Astro.generator} />
-    <title>Singapodent | Premium AI Dashboard</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
+    <title>Singapodent | Cephalometric Analysis</title>
+    <!-- Runs synchronously before paint: removes dark only if user explicitly chose light -->
+    <script is:inline>
+      (function () {
+        if (localStorage.getItem('theme') === 'light') {
+          document.documentElement.classList.remove('dark');
+        }
+      })();
+    </script>
   </head>
-  <body class="h-screen overflow-hidden flex flex-col bg-slate-50 dark:bg-slate-900 transition-colors duration-300 text-slate-900 dark:text-slate-100 antialiased selection:bg-singapodent-accent selection:text-white">
-    <header class="bg-white/80 dark:bg-slate-900/80 backdrop-blur-md border-b border-slate-200 dark:border-slate-800 z-50 transition-colors duration-300 shadow-sm relative">
+  <body class="h-screen overflow-hidden flex flex-col bg-slate-50 dark:bg-slate-900 transition-colors duration-300 text-slate-900 dark:text-slate-100 antialiased selection:bg-singapodent-accent selection:text-white" style="font-family: 'Plus Jakarta Sans', sans-serif;">
+
+    <header class="bg-white dark:bg-slate-900 border-b border-slate-200 dark:border-slate-800/70 z-50 transition-colors duration-300 relative">
       <div class="max-w-[1600px] w-full mx-auto px-6 h-[72px] flex items-center justify-between">
         <div class="flex items-center gap-3">
-          <div class="w-8 h-8 rounded-lg bg-singapodent-primary dark:bg-singapodent-accent flex items-center justify-center shadow-lg">
+          <div class="w-8 h-8 rounded-lg bg-singapodent-primary dark:bg-singapodent-accent flex items-center justify-center">
              <svg class="w-5 h-5 text-white" fill="currentColor" viewBox="0 0 24 24"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-1 15h-2v-2h2v2zm0-4h-2V7h2v6z"/></svg>
           </div>
           <h1 class="text-2xl tracking-tighter">

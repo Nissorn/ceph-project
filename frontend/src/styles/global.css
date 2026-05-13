@@ -1,16 +1,21 @@
 @import "tailwindcss";
+@variant dark (&:is(.dark *));
 
 @theme {
+  --color-singapodent-primary: #0c2340;
+  --color-singapodent-accent: #f28c28;
   --color-primary: #0c2340;
   --color-accent: #f28c28;
 }
 
 @layer base {
   body {
-    @apply bg-white text-gray-900 transition-colors duration-200;
+    font-family: 'Plus Jakarta Sans', sans-serif;
   }
-  
-  .dark body {
-    @apply bg-gray-900 text-gray-100;
+
+  @keyframes shimmer {
+    100% {
+      transform: translateX(100%);
+    }
   }
 }

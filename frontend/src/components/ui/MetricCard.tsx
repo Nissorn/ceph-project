@@ -12,19 +12,21 @@ export default function MetricCard({ title, value, status = 'normal' }: MetricCa
 
   if (status === 'warning') {
     valueColor = 'text-singapodent-accent';
-    statusIndicator = 'bg-singapodent-accent shadow-[0_0_10px_rgba(242,140,40,0.5)]';
+    statusIndicator = 'bg-singapodent-accent';
   } else if (status === 'critical') {
     valueColor = 'text-red-500 dark:text-red-400';
-    statusIndicator = 'bg-red-500 shadow-[0_0_10px_rgba(239,68,68,0.5)]';
+    statusIndicator = 'bg-red-500';
   } else if (status === 'normal') {
-    statusIndicator = 'bg-green-500 shadow-[0_0_10px_rgba(34,197,94,0.5)]';
+    statusIndicator = 'bg-green-500';
   }
 
   return (
-    <div className="bg-white/60 dark:bg-slate-800/60 backdrop-blur-md border border-white/40 dark:border-slate-700/50 shadow-xl rounded-2xl p-5 flex flex-col transition-all duration-300 hover:shadow-2xl relative overflow-hidden group">
-      <div className={`absolute left-0 top-0 bottom-0 w-1 ${statusIndicator} opacity-80 group-hover:opacity-100 transition-opacity`} />
-      <h3 className="text-xs font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wider ml-2">{title}</h3>
-      <div className={`mt-3 text-3xl font-semibold ml-2 ${valueColor}`}>{value}</div>
+    <div className="bg-white dark:bg-slate-800/90 border border-slate-200 dark:border-slate-700/60 rounded-xl p-5 flex flex-col relative overflow-hidden">
+      <div className="flex items-center justify-between">
+        <h3 className="text-sm font-medium text-slate-500 dark:text-slate-400 uppercase tracking-widest">{title}</h3>
+        <div className={`w-2.5 h-2.5 rounded-full ${statusIndicator}`} />
+      </div>
+      <div className={`mt-4 text-4xl font-light tracking-tight ${valueColor}`}>{value}</div>
     </div>
   );
 }
