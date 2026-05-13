@@ -519,105 +519,107 @@ export default function CephCanvasEditor({
         {/* ── Adapted Multi-Line Responsive Glass Pill Toolbar ──────────────── */}
         {img && (
           isToolbarOpen ? (
-            <div className="absolute bottom-4 left-1/2 -translate-x-1/2 w-[95%] md:w-auto max-w-4xl bg-black/85 backdrop-blur-md text-white/90 px-4 md:px-5 py-2.5 rounded-2xl md:rounded-full border border-white/10 flex flex-wrap gap-x-3 gap-y-2 text-xs items-center justify-center shadow-2xl z-50 animate-fade-in">
+            <div className="absolute bottom-4 left-1/2 -translate-x-1/2 flex flex-col items-center gap-1.5 w-[95%] md:w-auto max-w-4xl z-50 animate-fade-in pointer-events-none">
 
-              {/* Instructions */}
-              <span className="flex items-center gap-1 text-white/60">
-                <kbd className={chip}>Drag</kbd> move
-                <span className="mx-0.5 text-white/20">·</span>
-                <kbd className={chip}>Scroll</kbd> zoom
-                <span className="mx-0.5 text-white/20">·</span>
-                <kbd className={chip}>⇧+Click</kbd> add pt
-                <span className="mx-0.5 text-white/20">·</span>
-                <kbd className={chip}>DblClick</kbd> del pt
-              </span>
-
-              <span className="hidden md:inline text-white/20 select-none">|</span>
-
-              {/* Visibility toggles */}
-              <div className="flex items-center gap-3">
-                <label className="flex items-center gap-1.5 cursor-pointer select-none">
-                  <input
-                    type="checkbox" checked={showLandmarks}
-                    onChange={(e) => setShowLandmarks(e.target.checked)}
-                    className="accent-amber-400 w-3 h-3 cursor-pointer"
-                  />
-                  Landmarks
-                </label>
-                <label className="flex items-center gap-1.5 cursor-pointer select-none">
-                  <input
-                    type="checkbox" checked={showPolygons}
-                    onChange={(e) => setShowPolygons(e.target.checked)}
-                    className="accent-cyan-400 w-3 h-3 cursor-pointer"
-                  />
-                  Polygons
-                </label>
+              {/* Instructions helper row (hidden on tight screens to save vertical space) */}
+              <div className="hidden sm:flex items-center gap-1.5 text-[10px] text-white/50 bg-black/40 px-3 py-0.5 rounded-full backdrop-blur-sm border border-white/5 pointer-events-auto select-none">
+                <span><kbd className={chip}>Drag</kbd> move</span>
+                <span>·</span>
+                <span><kbd className={chip}>Scroll</kbd> zoom</span>
+                <span>·</span>
+                <span><kbd className={chip}>⇧+Click</kbd> add pt</span>
+                <span>·</span>
+                <span><kbd className={chip}>DblClick</kbd> del pt</span>
               </div>
 
-              <span className="hidden md:inline text-white/20 select-none">|</span>
+              {/* Main functional control bar */}
+              <div className="w-full md:w-auto bg-black/85 backdrop-blur-md text-white/90 px-4 py-2 rounded-xl md:rounded-full border border-white/10 flex flex-wrap md:flex-nowrap gap-x-3 gap-y-1.5 text-xs items-center justify-center shadow-2xl pointer-events-auto">
 
-              {/* Point size slider */}
-              <label className="flex items-center gap-2 select-none">
-                <span className="text-white/60 hidden sm:inline">Size</span>
-                <input
-                  type="range" min="1" max="10" step="0.5"
-                  value={pointSize}
-                  onChange={(e) => setPointSize(Number(e.target.value))}
-                  className="w-16 md:w-20 accent-orange-400 cursor-pointer"
-                />
-                <span className="font-mono w-4 text-right text-white/80">{pointSize}</span>
-              </label>
+                {/* Visibility toggles */}
+                <div className="flex items-center gap-2.5">
+                  <label className="flex items-center gap-1 cursor-pointer select-none whitespace-nowrap">
+                    <input
+                      type="checkbox" checked={showLandmarks}
+                      onChange={(e) => setShowLandmarks(e.target.checked)}
+                      className="accent-amber-400 w-3 h-3 cursor-pointer"
+                    />
+                    Landmarks
+                  </label>
+                  <label className="flex items-center gap-1 cursor-pointer select-none whitespace-nowrap">
+                    <input
+                      type="checkbox" checked={showPolygons}
+                      onChange={(e) => setShowPolygons(e.target.checked)}
+                      className="accent-cyan-400 w-3 h-3 cursor-pointer"
+                    />
+                    Polygons
+                  </label>
+                </div>
 
-              {/* Zoom indicator */}
-              {stageScale > 1 && (
-                <>
-                  <span className="text-white/20 select-none">|</span>
-                  <button
-                    onClick={resetZoom}
-                    className="flex items-center gap-1 text-white/60 hover:text-white transition-colors"
-                  >
-                    {Math.round(stageScale * 100)}%
-                    <span className="text-white/30 text-[10px]">✕</span>
-                  </button>
-                </>
-              )}
+                <span className="text-white/20 select-none">|</span>
 
-              {/* Selected element name */}
-              {selectedName && (
-                <>
-                  <span className="text-white/20 select-none">|</span>
-                  <span className="font-mono text-cyan-300 truncate max-w-[100px] md:max-w-[120px]">
-                    ● {selectedName}
-                  </span>
-                </>
-              )}
+                {/* Point size slider */}
+                <label className="flex items-center gap-1.5 select-none whitespace-nowrap">
+                  <span className="text-white/60 hidden sm:inline">Size</span>
+                  <input
+                    type="range" min="1" max="10" step="0.5"
+                    value={pointSize}
+                    onChange={(e) => setPointSize(Number(e.target.value))}
+                    className="w-14 sm:w-16 accent-orange-400 cursor-pointer"
+                  />
+                  <span className="tabular-nums font-mono w-4 text-right text-white/80">{pointSize}</span>
+                </label>
 
-              <span className="text-white/20 select-none">|</span>
+                {/* Zoom indicator — fixed width via tabular-nums w-12 to prevent zoom text growth reflows */}
+                {stageScale > 1 && (
+                  <>
+                    <span className="text-white/20 select-none">|</span>
+                    <button
+                      onClick={resetZoom}
+                      className="flex items-center justify-center gap-0.5 text-white/60 hover:text-white transition-colors whitespace-nowrap w-12 text-center tabular-nums font-mono bg-white/5 hover:bg-white/10 px-1.5 py-0.5 rounded text-[11px]"
+                      title="Reset Zoom"
+                    >
+                      {Math.round(stageScale * 100)}%
+                    </button>
+                  </>
+                )}
 
-              {/* Debug mode toggle */}
-              <button
-                onClick={() => setIsDebugMode(v => !v)}
-                title={isDebugMode ? 'Hide debug tools' : 'Show debug tools'}
-                className={`px-2 py-0.5 rounded transition-colors ${
-                  isDebugMode
-                    ? 'bg-amber-500/30 text-amber-300 border border-amber-500/40 font-medium'
-                    : 'text-white/40 hover:text-white/70'
-                }`}
-              >
-                Dev
-              </button>
+                {/* Selected element name */}
+                {selectedName && (
+                  <>
+                    <span className="text-white/20 select-none">|</span>
+                    <span className="font-mono text-cyan-300 truncate max-w-[80px] sm:max-w-[100px] whitespace-nowrap">
+                      ● {selectedName}
+                    </span>
+                  </>
+                )}
 
-              <span className="text-white/20 select-none">|</span>
+                <span className="text-white/20 select-none">|</span>
 
-              {/* Hide Toolbar Button */}
-              <button
-                onClick={() => setIsToolbarOpen(false)}
-                title="Minimize toolbar"
-                className="text-white/40 hover:text-white transition-colors p-1 rounded"
-              >
-                <span className="text-xs font-bold leading-none">✕</span>
-              </button>
+                {/* Debug mode toggle */}
+                <button
+                  onClick={() => setIsDebugMode(v => !v)}
+                  title={isDebugMode ? 'Hide debug tools' : 'Show debug tools'}
+                  className={`px-1.5 py-0.5 rounded transition-colors text-[11px] whitespace-nowrap ${
+                    isDebugMode
+                      ? 'bg-amber-500/30 text-amber-300 border border-amber-500/40 font-medium'
+                      : 'text-white/40 hover:text-white/70'
+                  }`}
+                >
+                  Dev
+                </button>
 
+                <span className="text-white/20 select-none">|</span>
+
+                {/* Hide Toolbar Button */}
+                <button
+                  onClick={() => setIsToolbarOpen(false)}
+                  title="Minimize toolbar"
+                  className="text-white/40 hover:text-white transition-colors p-1 rounded hover:bg-white/5"
+                >
+                  <span className="text-xs font-bold leading-none">✕</span>
+                </button>
+
+              </div>
             </div>
           ) : (
             <button
