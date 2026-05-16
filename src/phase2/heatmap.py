@@ -130,9 +130,10 @@ def encode_heatmaps(
         x_raw = keypoints[i, 0] * scale_x
         y_raw = keypoints[i, 1] * scale_y
 
-        # Clamp to valid range (edges can handle up to half size)
-        x0 = int(np.clip(round(x_raw), 0, W - 1))
-        y0 = int(np.clip(round(y_raw), 0, H - 1))
+        # Clamp center to [1, size-2] so the Gaussian can bleed past edges.
+        # Using floor() (not round()) for correct off-by-half behaviour.
+        x0 = int(np.clip(np.floor(x_raw), 1, W - 2))
+        y0 = int(np.clip(np.floor(y_raw), 1, H - 2))
 
         # Determine patch region (clipped to heatmap bounds)
         x_lo = max(0, x0 - half)
@@ -140,7 +141,7 @@ def encode_heatmaps(
         y_lo = max(0, y0 - half)
         y_hi = min(H, y0 + half + 1)
 
-        # Gaussian patch offset
+        # Gaussian patch offset — how much of the kernel falls inside the heatmap
         g_x_lo = max(0, half - x0)
         g_x_hi = g_x_lo + (x_hi - x_lo)
         g_y_lo = max(0, half - y0)

@@ -100,8 +100,10 @@ class AdaptiveWingLoss(nn.Module):
             mask_4d = mask.unsqueeze(-1).unsqueeze(-1).float()
             losses = losses * mask_4d
             n_valid = mask_4d.sum().clamp(min=1.0)
-            # Normalise by number of valid keypoints * spatial size
-            H, W = pred.shape[-2:]
-            return losses.sum() / (n_valid * H * W)
+            # Normalise by number of valid keypoints only — NOT spatial size.
+            # Dividing by H*W was killing gradient magnitudes and preventing learning.
+            # Each keypoint contributes H*W spatial positions to the loss; we want
+            # the average loss per keypoint (not per spatial pixel).
+            return losses.sum() / n_valid
 
         return losses.mean()

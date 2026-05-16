@@ -24,6 +24,32 @@ KEYPOINT_NAMES = [
 NUM_KEYPOINTS = len(KEYPOINT_NAMES)
 
 
+def get_kfold_splits(
+    records: list[dict],
+    n_folds: int = 5,
+) -> list[tuple[list[str], list[str]]]:
+    """
+    Build K-Fold cross-validation splits using GroupKFold (patient-level grouping).
+
+    Returns list of (train_image_ids, val_image_ids) — one tuple per fold.
+    All images from the same patient stay in the same split (no data leakage).
+    """
+    from sklearn.model_selection import GroupKFold
+
+    image_ids = [r["image_id"] for r in records]
+    groups = [r["patient_id"] for r in records]
+
+    gkf = GroupKFold(n_splits=n_folds)
+
+    splits = []
+    for train_idx, val_idx in gkf.split(image_ids, groups=groups):
+        train_ids = [image_ids[i] for i in train_idx]
+        val_ids = [image_ids[i] for i in val_idx]
+        splits.append((train_ids, val_ids))
+
+    return splits
+
+
 def get_lopo_splits(records: list[dict]) -> list[tuple[list[str], list[str]]]:
     """
     Build Leave-One-Patient-Out splits.

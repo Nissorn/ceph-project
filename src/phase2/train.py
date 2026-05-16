@@ -8,7 +8,7 @@ import torch.nn as nn
 from torch.utils.data import DataLoader
 from tqdm import tqdm
 
-from src.phase2.dataset import CephalometricDataset, get_lopo_splits
+from src.phase2.dataset import CephalometricDataset, get_kfold_splits
 from src.phase2.heatmap import encode_heatmaps, decode_heatmaps
 from src.phase2.loss import AdaptiveWingLoss
 from src.phase2.metrics import radial_error, compute_all_metrics
@@ -106,11 +106,169 @@ def compute_mean_mre(errors_list: list) -> float:
     return sum(all_errors) / len(all_errors) if all_errors else float("inf")
 
 
-def run_lopo_training(
+def run_kfold_training(
     config_path: str = "config.yaml",
     debug: bool = False,
     max_images: Optional[int] = None,
 ) -> dict:
+    """Run 5-Fold Cross-Validation training for cephalometric landmark detection.
+
+    Key features (vs LOPO v1):
+    - 5-Fold GroupKFold: all images from same patient stay in same split
+      ~73 train / ~19 val per fold with 92 total images
+    - Backbone unfrozen from Epoch 1 (no warmup freeze)
+    - Early stopping on val_mre with patience=15
+    - Best-model checkpoint per fold (save best, not last)
+    - Evaluate every 5 epochs + at final epoch
+    - Pretrained HRNet-W32 init for every fold
+    - Unified LR for backbone + head (no differential LR)
+    """
+    cfg = load_config(config_path)
+
+    import json
+    import pandas as pd
+
+    with open(cfg["data"]["landmarks_json"]) as f:
+        landmarks_data = json.load(f)
+    records = [r for r in landmarks_data["images"] if r.get("has_landmarks")]
+
+    if max_images is not None:
+        records = records[:max_images]
+
+    if not records:
+        print("WARNING: No annotated images found. Waiting for landmark annotations from Dr.")
+        return {"mre_mean_mm": None, "mre_std_mm": None, "per_landmark_mre": {}, "note": "no_data"}
+
+    cal_df = pd.read_csv(cfg["data"]["calibration_csv"]).set_index("image_id")
+    calibration_lookup = cal_df["mm_per_pixel"].to_dict()
+
+    device = torch.device(cfg["training"]["device"])
+    heatmap_size = tuple(cfg["model"]["heatmap_size"])
+    input_size = tuple(cfg["model"]["input_size"])
+    total_epochs = cfg["training"].get("epochs", 100)
+    if debug:
+        total_epochs = 2
+    lr = cfg["training"]["lr"]
+    batch_size = cfg["training"]["batch_size"]
+
+    n_folds = cfg["training"].get("k_folds", 5)
+    patience = cfg["training"].get("early_stopping_patience", 15)
+
+    from src.phase2.augmentation import build_train_transform, build_val_transform
+    aug_cfg = cfg["augmentation"]
+    train_transform = build_train_transform(
+        rotation_limit=aug_cfg["rotation_limit"],
+        zoom_limit=aug_cfg["zoom_limit"],
+        brightness_limit=aug_cfg["brightness_limit"],
+        contrast_limit=aug_cfg["contrast_limit"],
+        clahe=aug_cfg["clahe"],
+        horizontal_flip=False,
+    )
+    val_transform = build_val_transform()
+
+    splits = get_kfold_splits(records, n_folds=n_folds)
+    if debug:
+        splits = splits[:1]
+
+    fold_metrics = []
+    all_fold_errors = []
+
+    for fold_idx, (train_ids, val_ids) in enumerate(splits):
+        print(f"\n{'='*60}")
+        print(f"Fold {fold_idx + 1}/{n_folds}  |  train={len(train_ids)}, val={len(val_ids)}")
+
+        train_ds = CephalometricDataset(
+            records, cfg["data"]["image_dir"], input_size, train_transform, image_ids=train_ids
+        )
+        val_ds = CephalometricDataset(
+            records, cfg["data"]["image_dir"], input_size, val_transform, image_ids=val_ids
+        )
+
+        train_loader = DataLoader(
+            train_ds, batch_size=batch_size, shuffle=True, num_workers=0
+        )
+        val_loader = DataLoader(val_ds, batch_size=1, shuffle=False, num_workers=0)
+
+        # Fresh pretrained init for every fold
+        model = CephalometricModel(
+            num_keypoints=cfg["keypoints"]["num_keypoints"],
+            pretrained=True,
+        ).to(device)
+
+        # Unified optimizer — backbone fully unfrozen from Epoch 1
+        optimizer = torch.optim.AdamW(
+            model.parameters(),
+            lr=lr,
+            weight_decay=cfg["training"]["weight_decay"],
+        )
+        scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
+            optimizer, T_max=total_epochs, eta_min=lr * 0.001
+        )
+
+        best_mre = float("inf")
+        best_model_state = None
+        epochs_no_improve = 0
+
+        for epoch in range(total_epochs):
+            train_loss = train_one_epoch(
+                model, train_loader, optimizer, device,
+                heatmap_size, cfg["model"]["sigma"], input_size,
+            )
+            scheduler.step()
+
+            # Evaluate every 5 epochs + last epoch
+            eval_now = (epoch + 1) % 5 == 0 or epoch == total_epochs - 1
+
+            if eval_now:
+                fold_errors = evaluate(
+                    model, val_loader, device, heatmap_size, input_size, calibration_lookup
+                )
+                mre = compute_mean_mre(fold_errors)
+                current_lr = optimizer.param_groups[0]["lr"]
+
+                if mre < best_mre:
+                    best_mre = mre
+                    best_model_state = {k: v.cpu().clone() for k, v in model.state_dict().items()}
+                    epochs_no_improve = 0
+                    marker = " *BEST*"
+                else:
+                    epochs_no_improve += 5
+                    marker = ""
+
+                print(
+                    f"  [Fold {fold_idx+1}] Epoch {epoch+1}/{total_epochs} — "
+                    f"loss: {train_loss:.4f}, MRE: {mre:.2f}mm, "
+                    f"best: {best_mre:.2f}mm, LR: {current_lr:.6f}{marker}"
+                )
+
+                # Early stopping
+                if epochs_no_improve >= patience:
+                    print(f"  [Fold {fold_idx+1}] Early stopping at epoch {epoch+1}")
+                    break
+
+        # Restore best model for final evaluation
+        if best_model_state is not None:
+            model.load_state_dict(best_model_state)
+            model.to(device)
+
+        # Final evaluation with best model
+        fold_errors = evaluate(
+            model, val_loader, device, heatmap_size, input_size, calibration_lookup
+        )
+        all_fold_errors.extend(fold_errors)
+        fold_mre = compute_mean_mre(fold_errors)
+        fold_metrics.append({"fold": fold_idx + 1, "mre": fold_mre})
+        print(f"  [Fold {fold_idx+1}] Final best MRE: {fold_mre:.2f}mm")
+
+    # Aggregate across all folds
+    kp_names = cfg["keypoints"]["names"]
+    metrics = compute_all_metrics(
+        all_fold_errors,
+        sdr_thresholds=cfg["evaluation"]["sdr_thresholds_mm"],
+        keypoint_names=kp_names,
+    )
+    metrics["fold_metrics"] = fold_metrics
+    return metrics
     """Run full Leave-One-Patient-Out cross validation with proper training schedule.
 
     Key improvements over v1:
