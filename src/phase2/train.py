@@ -1,4 +1,4 @@
-"""LOPO training loop for HRNet landmark detection — MPS backend."""
+"""LOPO training loop for HRNet landmark detection — CUDA backend."""
 
 from pathlib import Path
 from typing import Optional
@@ -34,7 +34,6 @@ def train_one_epoch(
         keypoints_np = keypoints.numpy()
         valid_np = valid_mask.numpy()
 
-        # Encode ground truth heatmaps
         gt_heatmaps = []
         for b in range(len(keypoints_np)):
             hm = encode_heatmaps(keypoints_np[b], valid_np[b], heatmap_size, sigma, input_size)
@@ -45,14 +44,12 @@ def train_one_epoch(
 
         pred_heatmaps = model(imgs)
 
-        # Resize prediction to match gt if needed
         if pred_heatmaps.shape[-2:] != gt_tensor.shape[-2:]:
             pred_heatmaps = torch.nn.functional.interpolate(
                 pred_heatmaps, size=heatmap_size, mode="bilinear", align_corners=False
             )
 
-        # Pass valid_mask to AdaptiveWingLoss so only annotated landmarks contribute
-        mask = torch.from_numpy(valid_np).bool().to(device)  # [B, K]
+        mask = torch.from_numpy(valid_np).bool().to(device)
         loss = criterion(pred_heatmaps, gt_tensor, mask)
         optimizer.zero_grad()
         loss.backward()
@@ -60,7 +57,6 @@ def train_one_epoch(
         total_loss += loss.item()
 
     return total_loss / max(len(loader), 1)
-
 
 
 def evaluate(
@@ -102,12 +98,28 @@ def evaluate(
     return all_errors
 
 
+def compute_mean_mre(errors_list: list) -> float:
+    """Compute mean MRE from list of per-image error arrays."""
+    all_errors = []
+    for errors in errors_list:
+        all_errors.extend(errors.flatten().tolist())
+    return sum(all_errors) / len(all_errors) if all_errors else float("inf")
+
+
 def run_lopo_training(
     config_path: str = "config.yaml",
     debug: bool = False,
     max_images: Optional[int] = None,
 ) -> dict:
-    """Run full Leave-One-Patient-Out cross validation. Returns aggregated metrics."""
+    """Run full Leave-One-Patient-Out cross validation with proper training schedule.
+
+    Key improvements over v1:
+    - Backbone freezing for first N epochs (warmup) + lower LR for backbone
+    - Cosine annealing scheduler
+    - Best-model checkpointing per fold (save best, not last)
+    - Evaluate every 10 epochs + at final epoch
+    - Pretrained weights for ALL folds (not just fold 0)
+    """
     cfg = load_config(config_path)
 
     import json
@@ -115,7 +127,7 @@ def run_lopo_training(
 
     with open(cfg["data"]["landmarks_json"]) as f:
         landmarks_data = json.load(f)
-    records = [r for r in landmarks_data if r.get("has_landmarks")]
+    records = [r for r in landmarks_data["images"] if r.get("has_landmarks")]
 
     if max_images is not None:
         records = records[:max_images]
@@ -130,12 +142,18 @@ def run_lopo_training(
     device = torch.device(cfg["training"]["device"])
     heatmap_size = tuple(cfg["model"]["heatmap_size"])
     input_size = tuple(cfg["model"]["input_size"])
+    total_epochs = cfg["training"].get("epochs", 300)
+    if debug:
+        total_epochs = 1
+    lr = cfg["training"]["lr"]
+    batch_size = cfg["training"]["batch_size"]
+
+    warmup_epochs = cfg["training"].get("warmup_epochs", 10)
+    freeze_backbone = cfg["training"].get("freeze_backbone", False)
 
     splits = get_lopo_splits(records)
     if debug:
         splits = splits[:1]
-
-    epochs = 1 if debug else cfg["training"]["epochs"]
     all_fold_errors = []
 
     for fold_idx, (train_ids, test_ids) in enumerate(splits):
@@ -158,33 +176,88 @@ def run_lopo_training(
         )
 
         train_loader = DataLoader(
-            train_ds, batch_size=cfg["training"]["batch_size"],
-            shuffle=True, num_workers=0
+            train_ds, batch_size=batch_size, shuffle=True, num_workers=0
         )
         test_loader = DataLoader(test_ds, batch_size=1, shuffle=False, num_workers=0)
 
+        # Always pretrained=True — every fold gets fresh pretrained init
         model = CephalometricModel(
             num_keypoints=cfg["keypoints"]["num_keypoints"],
-            pretrained=(fold_idx == 0),  # download once, reuse checkpoint thereafter
+            pretrained=True,
         ).to(device)
 
-        optimizer = torch.optim.Adam(
-            model.parameters(),
-            lr=cfg["training"]["lr"],
-            weight_decay=cfg["training"]["weight_decay"],
-        )
+        # Phase 1: freeze backbone, train head only
+        if freeze_backbone:
+            for param in model.backbone.parameters():
+                param.requires_grad = False
 
-        for epoch in range(epochs):
-            train_one_epoch(
+        head_params = list(model.head.parameters())
+        backbone_params = list(model.backbone.parameters())
+
+        if freeze_backbone:
+            optimizer = torch.optim.AdamW(head_params, lr=lr, weight_decay=cfg["training"]["weight_decay"])
+            T_max = total_epochs - warmup_epochs
+            scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=T_max, eta_min=lr * 0.01)
+        else:
+            optimizer = torch.optim.AdamW(
+                [{"params": head_params, "lr": lr}, {"params": backbone_params, "lr": lr * 0.1}],
+                weight_decay=cfg["training"]["weight_decay"],
+            )
+            scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
+                optimizer, T_max=total_epochs, eta_min=lr * 0.001
+            )
+
+        best_mre = float("inf")
+        best_model_state = None
+        phase = 1
+
+        for epoch in range(total_epochs):
+            # Phase 2: unfreeze backbone after warmup
+            if freeze_backbone and epoch == warmup_epochs and phase == 1:
+                for param in model.backbone.parameters():
+                    param.requires_grad = True
+                optimizer = torch.optim.AdamW(
+                    [{"params": model.head.parameters(), "lr": lr * 0.5},
+                     {"params": model.backbone.parameters(), "lr": lr * 0.1}],
+                    weight_decay=cfg["training"]["weight_decay"],
+                )
+                T_max = total_epochs - warmup_epochs
+                scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
+                    optimizer, T_max=T_max, eta_min=lr * 0.001
+                )
+                phase = 2
+                print(f"  [Fold {fold_idx+1}] Backbone unfrozen at epoch {epoch+1}, LR head={lr*0.5:.6f}, backbone={lr*0.1:.6f}")
+
+            train_loss = train_one_epoch(
                 model, train_loader, optimizer, device,
                 heatmap_size, cfg["model"]["sigma"], input_size,
             )
+            scheduler.step()
 
+            # Evaluate every 10 epochs + at final epoch
+            if (epoch + 1) % 10 == 0 or epoch == total_epochs - 1:
+                fold_errors = evaluate(model, test_loader, device, heatmap_size, input_size, calibration_lookup)
+                mre = compute_mean_mre(fold_errors)
+                current_lr = optimizer.param_groups[0]["lr"]
+                if mre < best_mre:
+                    best_mre = mre
+                    best_model_state = {k: v.cpu().clone() for k, v in model.state_dict().items()}
+                    marker = " *BEST*"
+                else:
+                    marker = ""
+                print(f"  [Fold {fold_idx+1}] Epoch {epoch+1}/{total_epochs} — loss: {train_loss:.4f}, MRE: {mre:.2f}mm, best: {best_mre:.2f}mm, LR: {current_lr:.6f}{marker}")
+
+        # Restore best model for this fold
+        if best_model_state is not None:
+            model.load_state_dict(best_model_state)
+            model.to(device)
+
+        # Final evaluation with best model
         fold_errors = evaluate(model, test_loader, device, heatmap_size, input_size, calibration_lookup)
         all_fold_errors.extend(fold_errors)
 
         patient_id = test_ids[0].rsplit("_", 1)[0]
-        print(f"Fold {fold_idx + 1}/{len(splits)} — patient {patient_id} done")
+        print(f"Fold {fold_idx + 1}/{len(splits)} — patient {patient_id} — final MRE: {best_mre:.2f}mm")
 
     kp_names = cfg["keypoints"]["names"]
     metrics = compute_all_metrics(

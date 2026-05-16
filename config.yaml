@@ -29,17 +29,19 @@ model:
   architecture: "hrnet_w32"
   pretrained: "coco"
   input_size: [512, 512]
-  heatmap_size: [128, 128]
+  heatmap_size: [256, 256]
   sigma: 2.0
 
 training:
   batch_size: 4
-  epochs: 100
+  epochs: 300          # increased from 100 — HRNet needs more epochs to converge
   lr: 0.001
   weight_decay: 0.0001
-  device: "mps"
-  num_workers: 0  # must be 0 on MPS/Mac — multiprocessing causes hangs
+  device: "cuda"       # "cuda" for GPU server, "mps" for Mac
+  num_workers: 0
   eval_strategy: "lopo"
+  warmup_epochs: 10    # freeze backbone + train head-only for first N epochs
+  freeze_backbone: true # train head first, then finetune whole model
 
 augmentation:
   rotation_limit: 10
