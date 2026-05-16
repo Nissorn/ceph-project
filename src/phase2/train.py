@@ -245,8 +245,11 @@ def run_kfold_training(
                 mre_argmax = compute_mean_mre(fold_errors_argmax)
                 current_lr = optimizer.param_groups[0]["lr"]
 
-                if mre < best_mre:
-                    best_mre = mre
+                # Use argmax MRE for early stopping — soft-argmax collapses to center
+                # because beta is a non-learnable buffer so it can't self-correct.
+                # Argmax MRE is what actually matters and it IS improving during training.
+                if mre_argmax < best_mre:
+                    best_mre = mre_argmax
                     best_model_state = {k: v.cpu().clone() for k, v in model.state_dict().items()}
                     epochs_no_improve = 0
                     marker = " *BEST*"
@@ -414,16 +417,18 @@ def run_kfold_training(
 
             # Evaluate every 10 epochs + at final epoch
             if (epoch + 1) % 10 == 0 or epoch == total_epochs - 1:
-                fold_errors = evaluate(model, test_loader, device, heatmap_size, input_size, calibration_lookup)
-                mre = compute_mean_mre(fold_errors)
+                fold_errors_soft, fold_errors_argmax = evaluate(model, test_loader, device, heatmap_size, input_size, calibration_lookup)
+                mre = compute_mean_mre(fold_errors_soft)
+                mre_argmax = compute_mean_mre(fold_errors_argmax)
                 current_lr = optimizer.param_groups[0]["lr"]
-                if mre < best_mre:
-                    best_mre = mre
+                # Use argmax MRE for model selection (same reason as training early stopping)
+                if mre_argmax < best_mre:
+                    best_mre = mre_argmax
                     best_model_state = {k: v.cpu().clone() for k, v in model.state_dict().items()}
                     marker = " *BEST*"
                 else:
                     marker = ""
-                print(f"  [Fold {fold_idx+1}] Epoch {epoch+1}/{total_epochs} — loss: {train_loss:.4f}, MRE: {mre:.2f}mm, best: {best_mre:.2f}mm, LR: {current_lr:.6f}{marker}")
+                print(f"  [Fold {fold_idx+1}] Epoch {epoch+1}/{total_epochs} — loss: {train_loss:.4f}, MRE: {mre:.2f}mm, MRE_argmax: {mre_argmax:.2f}mm, best: {best_mre:.2f}mm, LR: {current_lr:.6f}{marker}")
 
         # Restore best model for this fold
         if best_model_state is not None:
