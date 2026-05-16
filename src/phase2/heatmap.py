@@ -16,8 +16,11 @@ class SoftArgmax2D(nn.Module):
 
     def __init__(self, temperature: float = 0.1):
         super().__init__()
-        # Beta (inverse temperature) — learned allows the model to tune sharpness
-        self.beta = nn.Parameter(torch.tensor(temperature))
+        # Beta (inverse temperature) — NON-LEARNABLE buffer.
+        # Using a Parameter allowed training to collapse beta → ~0.1, which destroyed
+        # soft-argmax spatial selectivity (near-uniform weighted average = center).
+        # Fixed at initialization value throughout training so soft-argmax stays sharp.
+        self.register_buffer("beta", torch.tensor(float(temperature)))
 
     def forward(
         self,
