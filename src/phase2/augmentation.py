@@ -41,7 +41,7 @@ def build_train_transform(
         A.ElasticTransform(
             alpha=1.0,
             sigma=50,
-            p=0.2,
+            p=0.1,
         ),
         # Grid distortion — moderate spatial warp
         A.GridDistortion(
