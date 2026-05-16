@@ -3,9 +3,10 @@
 IMPORTANT: horizontal_flip is permanently disabled.
 Lateral cephalograms have strict anatomical orientation — flipping invalidates ANS/PNS/landmarks.
 
-With only ~92 annotated images, augmentation is kept minimal to avoid destroying
-landmark geometry. Only affine transforms (translate/scale/rotate) + CLAHE are used.
-ElasticTransform, GridDistortion, Perspective are too aggressive for a tiny dataset.
+With only ~92 annotated images, augmentation is critical for regularization.
+We use affine (translate/scale/rotate) + elastic deformation + CLAHE.
+Elastic transforms the spatial structure of landmarks, forcing the model to learn
+invariant features rather than memorizing specific positions.
 """
 
 import albumentations as A
@@ -13,12 +14,14 @@ from albumentations.pytorch import ToTensorV2
 
 
 def build_train_transform(
-    rotation_limit: int = 5,
-    zoom_limit: float = 0.1,
+    rotation_limit: int = 15,
+    zoom_limit: float = 0.2,
     brightness_limit: float = 0.15,
     contrast_limit: float = 0.15,
     clahe: bool = True,
     horizontal_flip: bool = False,  # must remain False
+    elastic_deform: bool = True,
+    grid_distort: bool = True,
 ) -> A.Compose:
     if horizontal_flip:
         raise ValueError(
@@ -26,14 +29,25 @@ def build_train_transform(
             "Flipping swaps ANS/PNS and makes landmark coordinates anatomically invalid."
         )
 
-    # Only affine (translate/scale/rotate) + mild color augmentation
-    # Elastic/GridDistortion/Perspective removed — too aggressive for 92-image dataset
     transforms = [
+        # Geometric augmentation: rotation ±15°, scale ±20%, translate ±6%
         A.Affine(
             translate_percent={"x": (-0.06, 0.06), "y": (-0.06, 0.06)},
             scale=(1 - zoom_limit, 1 + zoom_limit),
             rotate=(-rotation_limit, rotation_limit),
-            p=0.8,
+            p=0.9,
+        ),
+        # Elastic deformation — warps landmark positions, forces spatial invariance
+        A.ElasticTransform(
+            alpha=1.0,
+            sigma=50,
+            p=0.3,
+        ),
+        # Grid distortion — moderate spatial warp
+        A.GridDistortion(
+            num_steps=5,
+            distort_limit=0.05,
+            p=0.2,
         ),
         A.RandomBrightnessContrast(
             brightness_limit=brightness_limit,
