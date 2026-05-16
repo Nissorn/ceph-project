@@ -35,8 +35,8 @@ model:
 training:
   batch_size: 4
   epochs: 100
-  lr: 0.001
-  weight_decay: 0.005
+  lr: 0.0005
+  weight_decay: 0.01
   device: "cuda"
   num_workers: 0
   eval_strategy: "5fold"
@@ -46,7 +46,7 @@ training:
   warmup_epochs: 0
   partial_freeze: true
   backbone_lr: 0.0001
-  head_lr: 0.001
+  head_lr: 0.0005
 
 augmentation:
   rotation_limit: 15
