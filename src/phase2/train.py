@@ -16,6 +16,63 @@ from src.phase2.model import CephalometricModel
 from src.utils.io import load_config
 
 
+# ---------------------------------------------------------------------------
+# Partial freezing helpers — freeze Stage 1 & 2 of HRNet-W32
+# The backbone has these layers (timm hrnet_w32):
+#   conv1, bn1, conv2, bn2          — stem
+#   layer1.*                        — Stage 1  (4 residual units)
+#   transition1.*                   — Transition 1→2
+#   stage2.*                        — Stage 2
+#   transition2.*                   — Transition 2→3
+#   stage3.*                        — Stage 3  ← unfreeze
+#   stage4.*                        — Stage 4  ← unfreeze
+#   head.*                          — HeatmapHead (always unfrozen)
+# ---------------------------------------------------------------------------
+
+def freeze_stage1_2(model: nn.Module) -> None:
+    """
+    Freeze Stage 1 (layer1) and Stage 2 (stage2) of HRNet-W32 backbone.
+    Also freezes the stem conv1/bn1/conv2/bn2 and transition layers.
+    Stage 3, Stage 4, and HeatmapHead remain trainable.
+    """
+    for name, param in model.backbone.named_parameters():
+        # Freeze: stem (conv1,bn1,conv2,bn2) + layer1 + transition1 + stage2
+        if (
+            name.startswith("conv1.")
+            or name.startswith("bn1.")
+            or name.startswith("conv2.")
+            or name.startswith("bn2.")
+            or name.startswith("layer1.")
+            or name.startswith("transition1.")
+            or name.startswith("stage2.")
+        ):
+            param.requires_grad = False
+        # stage3, stage4 remain trainable
+
+
+def get_partial_freeze_param_groups(
+    model: nn.Module, backbone_lr: float, head_lr: float, weight_decay: float
+) -> list[dict]:
+    """
+    Returns optimizer param groups for partial-freeze mode:
+      - stage1_2 frozen:   requires_grad=False (no entry needed)
+      - stage3_4:          lr=backbone_lr, weight_decay=weight_decay
+      - head:              lr=head_lr, weight_decay=weight_decay
+    """
+    stage3_4_params = []
+    head_params = []
+    for name, param in model.backbone.named_parameters():
+        if param.requires_grad:  # only unfrozen backbone params
+            stage3_4_params.append(param)
+    head_params = list(model.head.parameters())
+
+    groups = [
+        {"params": stage3_4_params, "lr": backbone_lr, "weight_decay": weight_decay},
+        {"params": head_params, "lr": head_lr, "weight_decay": weight_decay},
+    ]
+    return groups
+
+
 def train_one_epoch(
     model: nn.Module,
     loader: DataLoader,
@@ -213,12 +270,28 @@ def run_kfold_training(
             pretrained=True,
         ).to(device)
 
-        # Unified optimizer — backbone fully unfrozen from Epoch 1
-        optimizer = torch.optim.AdamW(
-            model.parameters(),
-            lr=lr,
-            weight_decay=cfg["training"]["weight_decay"],
-        )
+        # ── Partial freeze: Stage 1+2 frozen, Stage 3+4 + head trainable ──
+        partial_freeze = cfg["training"].get("partial_freeze", False)
+        if partial_freeze:
+            freeze_stage1_2(model)
+            backbone_lr = cfg["training"].get("backbone_lr", 1e-5)
+            head_lr = cfg["training"].get("head_lr", 1e-3)
+            param_groups = get_partial_freeze_param_groups(
+                model, backbone_lr, head_lr, cfg["training"]["weight_decay"]
+            )
+            optimizer = torch.optim.AdamW(param_groups)
+            print(
+                f"  [Partial freeze] backbone_lr={backbone_lr:.0e}  head_lr={head_lr:.0e}  "
+                f"trainable_params={sum(p.numel() for p in model.parameters() if p.requires_grad):,}"
+            )
+        else:
+            # Default: all params trainable, single LR
+            optimizer = torch.optim.AdamW(
+                model.parameters(),
+                lr=lr,
+                weight_decay=cfg["training"]["weight_decay"],
+            )
+
         scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
             optimizer, T_max=total_epochs, eta_min=lr * 0.001
         )
