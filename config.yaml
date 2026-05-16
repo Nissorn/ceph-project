@@ -30,12 +30,12 @@ model:
   pretrained: "coco"
   input_size: [512, 512]
   heatmap_size: [256, 256]
-  sigma: 3.0
+  sigma: 5.0
 
 training:
   batch_size: 4
   epochs: 100
-  lr: 0.0005
+  lr: 0.0003
   weight_decay: 0.0005
   device: "cuda"
   num_workers: 0
@@ -46,7 +46,7 @@ training:
   warmup_epochs: 0
   partial_freeze: true
   backbone_lr: 0.0001
-  head_lr: 0.0005
+  head_lr: 0.0003
 
 augmentation:
   rotation_limit: 15

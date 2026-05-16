@@ -41,13 +41,13 @@ def build_train_transform(
         A.ElasticTransform(
             alpha=1.0,
             sigma=50,
-            p=0.3,
+            p=0.2,
         ),
         # Grid distortion — moderate spatial warp
         A.GridDistortion(
             num_steps=5,
             distort_limit=0.05,
-            p=0.2,
+            p=0.1,
         ),
         A.RandomBrightnessContrast(
             brightness_limit=brightness_limit,
