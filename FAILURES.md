@@ -106,3 +106,42 @@ Read this before starting any task. Each entry is a mistake that already happene
 **Fix:** Added `from typing import Optional` and replaced `list[tuple[float,float]] | None` → `Optional[list[tuple[float,float]]]`  
 
 **Rule:** Always use `Optional[X]` from `typing` until venv is explicitly upgraded past Python 3.10.
+
+---
+
+## 2026-05-15 — SoftArgmax2D temperature=0.1 collapses predictions to center
+
+**Bug:** `src/phase2/heatmap.py` SoftArgmax2D — `temperature=0.1` in soft-argmax makes weight ratio peak/base = exp(0.105) ≈ 1.11 — essentially uniform. Soft-argmax returns spatial average (center of heatmap), not peak location.
+
+**Root cause (two compounding issues):**
+1. `temperature=0.1` in validation decode → soft-argmax nearly uniform → MRE ~10mm looked plausible but was completely wrong
+2. `self.beta = nn.Parameter(torch.tensor(temperature))` in SoftArgmax2D made beta LEARNABLE — backprop pushed beta back toward 0.1 regardless of initialization
+
+**Fix applied:**
+1. Changed `SoftArgmax2D.beta` from `nn.Parameter` → `register_buffer` (non-learnable)
+2. Changed validation/training decode temperature to 10.0 (from 0.1)
+3. Early stopping now uses argmax MRE, not soft-argmax MRE
+
+**Verification:** Run `python debug_coords.py` on server — argmax predictions should vary per image (not all 256.0,256.0)
+
+---
+
+## 2026-05-15 — Loss normalization crushed gradients by ~1000×
+
+**Bug:** `src/phase2/loss.py:107` — `loss = mse / (n_valid * H * W)` dividing by 2,621,440 → gradients ~0.001× true value.
+
+**Fix applied:** Changed to `/ n_valid` only — MSE per-sample averaged, not per-pixel.
+
+---
+
+## 2026-05-16 — 92 images fundamentally insufficient for HRNet-W32
+
+**Reality:** HRNet-W32 has 28M+ parameters. 73 training images per fold cannot provide sufficient generalization. All regularization (weight decay, augmentation) only SLOWS overfitting — does not prevent it.
+
+**Current baseline results (v6 with heavy regularization):**
+- Fold 1: best argmax MRE = 31.15mm (early stopped at epoch 20)
+- Fold 2: best argmax MRE = 36.51mm (still running, noisy improvement)
+
+**User's plan:** Acquiring 300+ clinical images. With proper data volume, heatmap regression IS the correct approach.
+
+**What NOT to do:** Do NOT switch to direct coordinate regression. Heatmap regression preserves spatial resolution and is the medical imaging industry standard for landmark detection. User explicitly rejected this direction.

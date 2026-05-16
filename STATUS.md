@@ -4,7 +4,8 @@ _Updated: 2026-05-12 (Microservices MVP complete, E2E verified, project paused a
 ---
 
 ## ⛔ CURRENT BLOCKER — READ FIRST
-**Training is strictly paused. Do NOT write or execute new AI training code until CVAT skeleton + polygon annotations are provided by Dr. Viet/Thủy.**
+**Training is running (v6 baseline) on server `iddi@158.108.168.11`. See `agent_memory/01_Current_Phase.md` for progress.**
+**The 92-image dataset is fundamentally insufficient for HRNet-W32. Awaiting 300+ images from user.**
 
 ---
 
