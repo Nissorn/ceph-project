@@ -36,7 +36,7 @@ training:
   batch_size: 4
   epochs: 100          # max epochs; early stopping will terminate sooner if val_mre plateaus
   lr: 0.001
-  weight_decay: 0.001   # heavy L2 regularization to combat overfitting on 92 images
+  weight_decay: 0.005   # increased from 0.001 to combat overfitting on 92 images
   device: "cuda"       # "cuda" for GPU server, "mps" for Mac
   num_workers: 0
   eval_strategy: "5fold"  # "5fold" for 5-fold CV (use get_kfold_splits)
@@ -46,7 +46,7 @@ training:
   warmup_epochs: 0             # not used when freeze_backbone=false
   partial_freeze: true          # freeze Stage 1+2, train Stage 3+4 + head only
   backbone_lr: 0.00001          # 1e-5 — very small LR for unfrozen backbone stages
-  head_lr: 0.001                # 1e-3 — normal LR for heatmap head
+  head_lr: 0.0005               # 5e-4 — lower LR for head to reduce overfitting
 
 augmentation:
   rotation_limit: 15
