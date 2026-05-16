@@ -174,7 +174,7 @@ def decode_heatmaps(
         confidence: [B, N] float32 — peak heatmap value
     """
     if use_soft_argmax:
-        soft_argmax = SoftArgmax2D(temperature=0.1)
+        soft_argmax = SoftArgmax2D(temperature=10.0)
         coords, confidence = soft_argmax(heatmaps, input_size)
     else:
         # Fallback: naive argmax (quantized)
