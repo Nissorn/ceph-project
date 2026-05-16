@@ -30,13 +30,13 @@ model:
   pretrained: "coco"
   input_size: [512, 512]
   heatmap_size: [256, 256]
-  sigma: 2.0
+  sigma: 3.0
 
 training:
   batch_size: 4
   epochs: 100
-  lr: 0.0005
-  weight_decay: 0.01
+  lr: 0.0003
+  weight_decay: 0.001
   device: "cuda"
   num_workers: 0
   eval_strategy: "5fold"
