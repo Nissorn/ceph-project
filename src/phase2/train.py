@@ -66,10 +66,11 @@ def evaluate(
     heatmap_size: tuple[int, int],
     input_size: tuple[int, int],
     calibration_lookup: dict[str, float],
-) -> list:
-    """Returns list of per-image radial error arrays (in mm)."""
+) -> tuple[list, list]:
+    """Returns (soft_errors, argmax_errors) — both lists of per-image radial error arrays (in mm)."""
     model.eval()
-    all_errors = []
+    soft_errors = []
+    argmax_errors = []
 
     with torch.no_grad():
         for imgs, keypoints_gt, valid_mask, metas in loader:
@@ -81,21 +82,38 @@ def evaluate(
                     pred_heatmaps, size=heatmap_size, mode="bilinear", align_corners=False
                 )
 
-            coords, confidence = decode_heatmaps(pred_heatmaps.cpu(), input_size)
+            # Soft-argmax coordinates
+            coords_soft, confidence = decode_heatmaps(pred_heatmaps.cpu(), input_size)
+
+            # Hard-argmax coordinates (naive argmax, for sanity check)
+            B, N, H, W = pred_heatmaps.shape
+            conf = torch.sigmoid(pred_heatmaps.cpu())
+            flat = conf.view(B * N, -1)
+            _, flat_idx = flat.max(dim=-1)
+            x_argmax = (flat_idx % W).float() / W * input_size[1]
+            y_argmax = (flat_idx // W).float() / H * input_size[0]
+            coords_argmax = torch.stack([x_argmax, y_argmax], dim=-1).view(B, N, 2)
 
             for b in range(imgs.shape[0]):
                 image_id = metas["image_id"][b]
                 mm_per_px = calibration_lookup.get(image_id, 1.0)
                 valid = valid_mask[b].numpy()
 
-                errors = radial_error(
-                    coords[b].numpy()[valid],
+                soft_err = radial_error(
+                    coords_soft[b].numpy()[valid],
                     keypoints_gt[b].numpy()[valid],
                     mm_per_px,
                 )
-                all_errors.append(errors)
+                soft_errors.append(soft_err)
 
-    return all_errors
+                argmax_err = radial_error(
+                    coords_argmax[b].numpy()[valid],
+                    keypoints_gt[b].numpy()[valid],
+                    mm_per_px,
+                )
+                argmax_errors.append(argmax_err)
+
+    return soft_errors, argmax_errors
 
 
 def compute_mean_mre(errors_list: list) -> float:
@@ -220,10 +238,11 @@ def run_kfold_training(
             eval_now = (epoch + 1) % 5 == 0 or epoch == total_epochs - 1
 
             if eval_now:
-                fold_errors = evaluate(
+                fold_errors_soft, fold_errors_argmax = evaluate(
                     model, val_loader, device, heatmap_size, input_size, calibration_lookup
                 )
-                mre = compute_mean_mre(fold_errors)
+                mre = compute_mean_mre(fold_errors_soft)
+                mre_argmax = compute_mean_mre(fold_errors_argmax)
                 current_lr = optimizer.param_groups[0]["lr"]
 
                 if mre < best_mre:
@@ -237,7 +256,7 @@ def run_kfold_training(
 
                 print(
                     f"  [Fold {fold_idx+1}] Epoch {epoch+1}/{total_epochs} — "
-                    f"loss: {train_loss:.4f}, MRE: {mre:.2f}mm, "
+                    f"loss: {train_loss:.4f}, MRE: {mre:.2f}mm, MRE_argmax: {mre_argmax:.2f}mm, "
                     f"best: {best_mre:.2f}mm, LR: {current_lr:.6f}{marker}"
                 )
 
@@ -251,14 +270,15 @@ def run_kfold_training(
             model.load_state_dict(best_model_state)
             model.to(device)
 
-        # Final evaluation with best model
-        fold_errors = evaluate(
+        # Final evaluation with best model (both metrics)
+        fold_errors_soft_final, fold_errors_argmax_final = evaluate(
             model, val_loader, device, heatmap_size, input_size, calibration_lookup
         )
-        all_fold_errors.extend(fold_errors)
-        fold_mre = compute_mean_mre(fold_errors)
+        all_fold_errors.extend(fold_errors_soft_final)
+        fold_mre = compute_mean_mre(fold_errors_soft_final)
+        fold_mre_argmax = compute_mean_mre(fold_errors_argmax_final)
         fold_metrics.append({"fold": fold_idx + 1, "mre": fold_mre})
-        print(f"  [Fold {fold_idx+1}] Final best MRE: {fold_mre:.2f}mm")
+        print(f"  [Fold {fold_idx+1}] Final best MRE: {fold_mre:.2f}mm (argmax: {fold_mre_argmax:.2f}mm)")
 
     # Aggregate across all folds
     kp_names = cfg["keypoints"]["names"]
