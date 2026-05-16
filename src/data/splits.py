@@ -121,7 +121,8 @@ def main():
         return
         
     with open(records_path, "r", encoding="utf-8") as f:
-        records = json.load(f)
+        data = json.load(f)
+        records = data["images"]
         
     splits = build_splits(records)
     

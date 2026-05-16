@@ -40,7 +40,7 @@ def main():
     
     log.info("Saving cleanly parsed records to %s", output_path)
     with open(output_path, "w", encoding="utf-8") as f:
-        json.dump(records, f, indent=2)
+        json.dump({"images": records}, f, indent=2)
         
     log.info("Done!")
 
