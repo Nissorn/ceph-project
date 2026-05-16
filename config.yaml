@@ -34,19 +34,19 @@ model:
 
 training:
   batch_size: 4
-  epochs: 100          # max epochs; early stopping will terminate sooner if val_mre plateaus
+  epochs: 100
   lr: 0.001
-  weight_decay: 0.005   # increased from 0.001 to combat overfitting on 92 images
-  device: "cuda"       # "cuda" for GPU server, "mps" for Mac
+  weight_decay: 0.005
+  device: "cuda"
   num_workers: 0
-  eval_strategy: "5fold"  # "5fold" for 5-fold CV (use get_kfold_splits)
+  eval_strategy: "5fold"
   k_folds: 5
-  early_stopping_patience: 15   # stop if val_mre doesn't improve for 15 evaluation windows (~15 epochs)
-  freeze_backbone: false        # unfrozen from Epoch 1 — full gradient flow for medical domain transfer
-  warmup_epochs: 0             # not used when freeze_backbone=false
-  partial_freeze: true          # freeze Stage 1+2, train Stage 3+4 + head only
-  backbone_lr: 0.00005          # 5e-5 — increased from 1e-5 for better domain transfer
-  head_lr: 0.0005               # 5e-4 — lower LR for head to reduce overfitting
+  early_stopping_patience: 15
+  freeze_backbone: false
+  warmup_epochs: 0
+  partial_freeze: true
+  backbone_lr: 0.0001
+  head_lr: 0.001
 
 augmentation:
   rotation_limit: 15
@@ -54,10 +54,9 @@ augmentation:
   brightness_limit: 0.2
   contrast_limit: 0.2
   clahe: true
-  horizontal_flip: false  # NEVER true — breaks lateral cephalogram anatomy
+  horizontal_flip: false
 
 phase3:
-  # PENDING confirmation from Dr.
   tipping_threshold_deg: null
   translation_threshold_mm: null
   treatment_classes:
@@ -70,5 +69,5 @@ phase3:
 
 evaluation:
   sdr_thresholds_mm: [2.0, 2.5, 3.0, 4.0]
-  confidence_low_threshold: 0.3  # below this → flag as low confidence (red dot)
+  confidence_low_threshold: 0.3
   tta_n_augments: 5
