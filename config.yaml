@@ -46,7 +46,7 @@ training:
   partial_freeze: true
   backbone_lr: 0.0001
   head_lr: 0.0001
-  weight_decay: 0.003
+  weight_decay: 0.002
 
 augmentation:
   rotation_limit: 15

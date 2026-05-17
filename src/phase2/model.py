@@ -56,20 +56,27 @@ class HeatmapHead(nn.Module):
 
         # Learned upsampling via transposed convolutions
         # 16 → 32 → 64 → 128 → 256 (4 stages, each 2×)
+        # Note: Dropout (not Dropout2d) preserves spatial activation patterns.
+        # Dropout2d zeroed entire channels, disrupting the fine-grained spatial
+        # structure needed for sub-pixel landmark localization.
         self.up1 = nn.ConvTranspose2d(256, 256, kernel_size=4, stride=2, padding=1, bias=False)
+        self.drop1 = nn.Dropout(0.1)
         self.up2 = nn.ConvTranspose2d(256, 256, kernel_size=4, stride=2, padding=1, bias=False)
+        self.drop2 = nn.Dropout(0.1)
         self.up3 = nn.ConvTranspose2d(256, 256, kernel_size=4, stride=2, padding=1, bias=False)
-        self.up4 = nn.ConvTranspose2d(256, 128, kernel_size=4, stride=2, padding=1, bias=False)
+        self.drop3 = nn.Dropout(0.1)
+        self.up4 = nn.ConvTranspose2d(256, 256, kernel_size=4, stride=2, padding=1, bias=False)
+        self.drop4 = nn.Dropout(0.1)
 
         # Final 1×1 to produce per-keypoint channels
-        self.head = nn.Conv2d(128, num_keypoints, kernel_size=1)
+        self.head = nn.Conv2d(256, num_keypoints, kernel_size=1)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         x = self.reduce(x)      # [B, 256, 16, 16]
-        x = self.up1(x)         # [B, 256, 32, 32]
-        x = self.up2(x)         # [B, 256, 64, 64]
-        x = self.up3(x)         # [B, 256, 128, 128]
-        x = self.up4(x)         # [B, 128, 256, 256]
+        x = self.drop1(self.up1(x))         # [B, 256, 32, 32]
+        x = self.drop2(self.up2(x))         # [B, 256, 64, 64]
+        x = self.drop3(self.up3(x))         # [B, 256, 128, 128]
+        x = self.drop4(self.up4(x))         # [B, 128, 256, 256]
         x = self.head(x)        # [B, K, 256, 256]
         return x
 
