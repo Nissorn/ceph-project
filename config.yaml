@@ -44,7 +44,7 @@ training:
   freeze_backbone: false
   warmup_epochs: 0
   partial_freeze: true
-  backbone_lr: 0.00005
+  backbone_lr: 0.00001
   head_lr: 0.0001
   weight_decay: 0.002
 
