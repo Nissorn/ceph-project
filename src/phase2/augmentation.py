@@ -40,7 +40,7 @@ def build_train_transform(
         # Elastic deformation — warps landmark positions, forces spatial invariance
         A.ElasticTransform(
             alpha=0.5,
-            sigma=30,
+            sigma=25,
             p=0.4,
         ),
         # Grid distortion — moderate spatial warp
