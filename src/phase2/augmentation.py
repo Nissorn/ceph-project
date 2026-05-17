@@ -33,21 +33,21 @@ def build_train_transform(
         # Geometric augmentation: rotation ±15°, scale ±20%, translate ±6%
         A.Affine(
             translate_percent={"x": (-0.06, 0.06), "y": (-0.06, 0.06)},
-            scale=(1 - zoom_limit, 1 + zoom_limit),
-            rotate=(-rotation_limit, rotation_limit),
-            p=0.9,
+            scale=(1 - 0.2, 1 + 0.2),
+            rotate=(-15, 15),
+            p=0.8,
         ),
         # Elastic deformation — warps landmark positions, forces spatial invariance
         A.ElasticTransform(
-            alpha=1.0,
-            sigma=50,
-            p=0.1,
+            alpha=0.5,
+            sigma=30,
+            p=0.4,
         ),
         # Grid distortion — moderate spatial warp
         A.GridDistortion(
             num_steps=5,
-            distort_limit=0.05,
-            p=0.1,
+            distort_limit=0.1,
+            p=0.3,
         ),
         A.RandomBrightnessContrast(
             brightness_limit=brightness_limit,

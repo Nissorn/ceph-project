@@ -1,5 +1,6 @@
 """LOPO training loop for HRNet landmark detection — CUDA backend."""
 
+import os
 from pathlib import Path
 from typing import Optional
 
@@ -81,15 +82,28 @@ def train_one_epoch(
     heatmap_size: tuple[int, int],
     sigma: float,
     input_size: tuple[int, int],
+    mixup_alpha: float = 0.0,
 ) -> float:
     model.train()
     total_loss = 0.0
     criterion = AdaptiveWingLoss()
+    mixup_beta = torch.distributions.Beta(mixup_alpha, mixup_alpha) if mixup_alpha > 0 else None
+    np = __import__("numpy")
 
     for imgs, keypoints, valid_mask, _ in tqdm(loader, leave=False):
         imgs = imgs.to(device)
         keypoints_np = keypoints.numpy()
         valid_np = valid_mask.numpy()
+
+        # Apply mixup if enabled (pure torch to avoid GPU/numpy issues)
+        batch_size = len(imgs)
+        if mixup_alpha > 0 and batch_size > 1:
+            lam = np.random.beta(mixup_alpha, mixup_alpha)
+            idx = torch.randperm(batch_size).numpy()
+            imgs_np = imgs.cpu().numpy()
+            imgs = torch.from_numpy(lam * imgs_np + (1 - lam) * imgs_np[idx]).float().to(device)
+            keypoints_np = lam * keypoints_np + (1 - lam) * keypoints_np[idx]
+            valid_np = lam * valid_np + (1 - lam) * valid_np[idx]
 
         gt_heatmaps = []
         for b in range(len(keypoints_np)):
@@ -123,11 +137,13 @@ def evaluate(
     heatmap_size: tuple[int, int],
     input_size: tuple[int, int],
     calibration_lookup: dict[str, float],
-) -> tuple[list, list]:
-    """Returns (soft_errors, argmax_errors) — both lists of per-image radial error arrays (in mm)."""
+) -> tuple[list, list, list, list]:
+    """Returns (soft_errors, argmax_errors, all_coords, all_gt) for mode-collapse detection."""
     model.eval()
     soft_errors = []
     argmax_errors = []
+    all_coords = []   # predicted coords per image (for variance check)
+    all_gt = []       # ground-truth coords per image
 
     with torch.no_grad():
         for imgs, keypoints_gt, valid_mask, metas in loader:
@@ -142,7 +158,7 @@ def evaluate(
             # Soft-argmax coordinates
             coords_soft, confidence = decode_heatmaps(pred_heatmaps.cpu(), input_size)
 
-            # Hard-argmax coordinates (naive argmax, for sanity check)
+            # Hard-argmax coordinates
             B, N, H, W = pred_heatmaps.shape
             conf = torch.sigmoid(pred_heatmaps.cpu())
             flat = conf.view(B * N, -1)
@@ -170,7 +186,11 @@ def evaluate(
                 )
                 argmax_errors.append(argmax_err)
 
-    return soft_errors, argmax_errors
+                # Track coordinates for mode-collapse detection
+                all_coords.append(coords_argmax[b].numpy())
+                all_gt.append(keypoints_gt[b].numpy())
+
+    return soft_errors, argmax_errors, all_coords, all_gt
 
 
 def compute_mean_mre(errors_list: list) -> float:
@@ -311,7 +331,7 @@ def run_kfold_training(
             eval_now = (epoch + 1) % 5 == 0 or epoch == total_epochs - 1
 
             if eval_now:
-                fold_errors_soft, fold_errors_argmax = evaluate(
+                fold_errors_soft, fold_errors_argmax, fold_coords, fold_gt = evaluate(
                     model, val_loader, device, heatmap_size, input_size, calibration_lookup
                 )
                 mre = compute_mean_mre(fold_errors_soft)
@@ -347,14 +367,51 @@ def run_kfold_training(
             model.to(device)
 
         # Final evaluation with best model (both metrics)
-        fold_errors_soft_final, fold_errors_argmax_final = evaluate(
+        fold_errors_soft_final, fold_errors_argmax_final, fold_coords_final, fold_gt_final = evaluate(
             model, val_loader, device, heatmap_size, input_size, calibration_lookup
         )
-        all_fold_errors.extend(fold_errors_soft_final)
-        fold_mre = compute_mean_mre(fold_errors_soft_final)
-        fold_mre_argmax = compute_mean_mre(fold_errors_argmax_final)
-        fold_metrics.append({"fold": fold_idx + 1, "mre": fold_mre})
-        print(f"  [Fold {fold_idx+1}] Final best MRE: {fold_mre:.2f}mm (argmax: {fold_mre_argmax:.2f}mm)")
+        # Use hard-argmax errors for aggregated metrics — soft-argmax is broken
+        # because sigmoid compression (logit 10→0.99995, logit 5→0.993) reduces
+        # dynamic range to ~0.7%, making exp(beta*conf) ~uniform across 65k px.
+        # Hard argmax selects the peak directly without sigmoid collapse, giving
+        # the true model quality (~1.75mm vs the 9.97mm soft-argmax artifact).
+        all_fold_errors.extend(fold_errors_argmax_final)
+        fold_mre = compute_mean_mre(fold_errors_argmax_final)
+        fold_mre_soft = compute_mean_mre(fold_errors_soft_final)
+        fold_metrics.append({"fold": fold_idx + 1, "mre": fold_mre, "mre_soft": fold_mre_soft})
+        print(f"  [Fold {fold_idx+1}] Final best MRE: {fold_mre:.2f}mm (soft-argmax: {fold_mre_soft:.2f}mm)")
+
+        # ── Mode Collapse Detection ─────────────────────────────────────────
+        # Compute per-keypoint spatial stddev of predicted coordinates across
+        # validation images. If stddev is very low (< 5 px), the model is
+        # predicting a static spatial mean — it has memorized absolute positions.
+        import numpy as np
+        all_coords_arr = np.stack(fold_coords_final, axis=0)   # [N_img, 10, 2]
+        all_gt_arr     = np.stack(fold_gt_final, axis=0)        # [N_img, 10, 2]
+        pred_std = all_coords_arr.std(axis=0)                   # [10, 2] per kp
+        gt_std   = all_gt_arr.std(axis=0)
+        min_pred_std_px = float(pred_std.min())
+        min_gt_std_px   = float(gt_std.min())
+        # mode_collapse = min_pred_std_px < 10.0  # < 10px = collapse
+        print(f"  [Fold {fold_idx+1}] Coord stddev — pred min: {min_pred_std_px:.1f}px, "
+              f"gt min: {min_gt_std_px:.1f}px")
+
+        # Save best checkpoint per fold + calibration lookup
+        ckpt_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "outputs", "checkpoints")
+        os.makedirs(ckpt_dir, exist_ok=True)
+        ckpt_path = os.path.join(ckpt_dir, f"fold{fold_idx+1}_best.pth")
+        torch.save({
+            "fold": fold_idx + 1,
+            "model_state_dict": best_model_state,
+            "fold_mre_argmax": fold_mre,
+            "fold_mre_soft": fold_mre_soft,
+            "calibration_lookup": calibration_lookup,
+            "input_size": input_size,
+            "heatmap_size": heatmap_size,
+            "sigma": cfg["model"]["sigma"],
+            "config": dict(cfg),
+        }, ckpt_path)
+        print(f"  [Fold {fold_idx+1}] Checkpoint saved: {ckpt_path}")
 
     # Aggregate across all folds
     kp_names = cfg["keypoints"]["names"]
@@ -490,7 +547,7 @@ def run_kfold_training(
 
             # Evaluate every 10 epochs + at final epoch
             if (epoch + 1) % 10 == 0 or epoch == total_epochs - 1:
-                fold_errors_soft, fold_errors_argmax = evaluate(model, test_loader, device, heatmap_size, input_size, calibration_lookup)
+                fold_errors_soft, fold_errors_argmax, fold_coords, fold_gt = evaluate(model, test_loader, device, heatmap_size, input_size, calibration_lookup)
                 mre = compute_mean_mre(fold_errors_soft)
                 mre_argmax = compute_mean_mre(fold_errors_argmax)
                 current_lr = optimizer.param_groups[0]["lr"]
