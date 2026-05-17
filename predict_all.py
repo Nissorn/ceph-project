@@ -71,8 +71,7 @@ INPUT_SIZE = (512, 512)   # (H, W) that the model expects
 HEATMAP_SIZE = (256, 256)  # (H, W) that the model outputs
 
 # ── ImageNet normalization (matches HRNet-W32 coco pretraining) ────────────
-IMAGENET_MEAN = np.array([0.485, 0.456, 0.406], dtype=np.float32)
-IMAGENET_STD  = np.array([0.229, 0.224, 0.225], dtype=np.float32)
+IMAGENET_STD  = np.array([0.229, 0.224, 0.225], dtype=np.float32)  # kept for reference only (unused after fix)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -141,11 +140,11 @@ def preprocess_image(
     # Resize to model input size (H, W) — note cv2.resize takes (W, H)
     img_resized = cv2.resize(img, (input_size[1], input_size[0]), interpolation=cv2.INTER_LINEAR)
 
-    # [H, W, 3] uint8 → [3, H, W] float32 in [0, 255]
-    tensor = img_resized.transpose(2, 0, 1).astype(np.float32)
-
-    # ImageNet normalization
-    tensor = (tensor / 255.0 - IMAGENET_MEAN[:, None, None]) / IMAGENET_STD[:, None, None]
+    # [H, W, 3] uint8 → [3, H, W] float32 in [0, 1]
+    # NOTE: Model was trained with simple /255 normalization (no ImageNet mean/std).
+    # DO NOT use ImageNet normalization here — it shifts inputs to [-2, +2] which
+    # breaks the model's learned features (the backbone was never fine-tuned for this).
+    tensor = img_resized.transpose(2, 0, 1).astype(np.float32) / 255.0
 
     # Add batch dimension → [1, 3, H, W]
     tensor = torch.from_numpy(tensor).unsqueeze(0)
@@ -281,8 +280,8 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--checkpoint",
         type=str,
-        required=True,
-        help="Path to trained model weights (.pth)",
+        default=str(ROOT / "outputs" / "checkpoints" / "fold1_best.pth"),
+        help="Path to trained model weights (.pth) (default: outputs/checkpoints/fold1_best.pth)",
     )
     parser.add_argument(
         "--output",
@@ -342,9 +341,12 @@ def main() -> None:
     print(f"[INFO] Found {len(image_paths)} images in {image_dir}")
 
     # ── Load model ─────────────────────────────────────────────────────────
-    print(f"[INFO] Loading model from: {args.checkpoint}")
+    checkpoint_path = ROOT / "outputs" / "checkpoints" / "fold1_best.pth"
+    if not checkpoint_path.exists():
+        raise FileNotFoundError(f"Checkpoint not found: {checkpoint_path}")
+    print(f"[INFO] Loading model from: {checkpoint_path}")
     model = CephalometricModel(num_keypoints=NUM_KEYPOINTS, pretrained=False)
-    ckpt = torch.load(args.checkpoint, map_location=device, weights_only=False)
+    ckpt = torch.load(checkpoint_path, map_location=device, weights_only=False)
     # Training checkpoints are saved as wrapper dicts (with metadata).
     # Raw model weights are under "model_state_dict".
     if "model_state_dict" in ckpt:
