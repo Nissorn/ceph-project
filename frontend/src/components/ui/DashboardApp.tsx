@@ -10,6 +10,29 @@ export default function DashboardApp() {
   const [results, setResults] = useState<any>(null);
   const [error, setError] = useState<string | null>(null);
 
+  // ── AI pre-annotation predictions (loaded once, keyed by filename) ─────────
+  const [aiPredictions, setAiPredictions] = useState<
+    Record<string, Record<string, { x: number; y: number; confidence: number }>>
+  >({});
+
+  const hasPredictions = Object.keys(aiPredictions).length > 0;
+
+  // Canvas shows when: backend analysis returned results  OR  a file is loaded (AI JSON lookup will happen inside CephCanvasEditor)
+  const editorVisible = !!(results || (file && hasPredictions));
+
+  useEffect(() => {
+    console.log("[Debug] Fetching AI predictions JSON...");
+    fetch('/data/predictions.json')
+      .then(r => r.json())
+      .then(data => {
+        console.log("[Debug] Loaded successfully! Total images in JSON:", Object.keys(data).length);
+        setAiPredictions(data);
+      })
+      .catch((err) => {
+        console.error("[Debug] Failed to load JSON:", err);
+      });
+  }, []);
+
   // Optimized Object URL lifecycle management to prevent browser memory leaks
   useEffect(() => {
     if (!file) {
@@ -88,14 +111,35 @@ export default function DashboardApp() {
       // Clinical polygon order: Upper_incisor, Labial_bone, Palatal_bone
       const POLY_NAMES = ['Upper_incisor','Labial_bone','Palatal_bone'];
 
-      const apiKeypoints = Array.isArray(payload.keypoints)
-        ? payload.keypoints.map((kp: any, i: number) => ({
+      const apiKeypoints = (() => {
+        // ── Live API path: {landmarks: {Upper_tip: {x,y,conf}, ...}} ───────────
+        const lm = payload?.landmarks;
+        if (lm && typeof lm === 'object' && !Array.isArray(lm)) {
+          console.log("[Debug] Using live API landmarks:", lm);
+          return Object.entries(lm).map(([name, pt]: [string, any], i: number) => ({
+            id:       `kp-${i}`,
+            name:     name,
+            x:        Number(pt?.x ?? 0),
+            y:        Number(pt?.y ?? 0),
+            confidence: Number(pt?.confidence ?? 1.0),
+          }));
+        }
+
+        // ── Legacy array path (from static JSON fallback) ─────────────────────
+        if (Array.isArray(payload.keypoints)) {
+          console.log("[Debug] Using keypoints array (legacy static path):", payload.keypoints);
+          return payload.keypoints.map((kp: any, i: number) => ({
             id:   `kp-${i}`,
             name: KP_NAMES[i] ?? kp?.name ?? `kp-${i}`,
             x:    Number(kp?.x ?? 0),
             y:    Number(kp?.y ?? 0),
-          }))
-        : undefined;
+            confidence: Number(kp?.confidence ?? 1.0),
+          }));
+        }
+
+        console.warn("[Debug] No valid keypoint source found — payload:", payload);
+        return undefined;
+      })();
 
       const apiPolygons = Array.isArray(payload.polygons)
         ? payload.polygons.map((poly: any, i: number) => ({
@@ -169,15 +213,30 @@ export default function DashboardApp() {
                  <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" /></svg>
                </button>
 
-               {/* After analysis: interactive Ceph Editor; before: plain preview */}
-               {results && !isLoading ? (
-                 <div className="absolute inset-0 z-10">
-                   <CephCanvasEditor
-                     imageFile={file}
-                     initialKeypoints={results.annotations?.keypoints}
-                     initialPolygons={results.annotations?.polygons}
-                   />
-                 </div>
+{/* After analysis: interactive Ceph Editor; before: plain preview */}
+              {editorVisible ? (
+                <div className="absolute inset-0 z-10">
+                  <CephCanvasEditor
+                    imageFile={file}
+                    initialKeypoints={(() => {
+                      console.log("[Debug] Uploaded file name:", file.name);
+                      const preds = aiPredictions[file.name];
+                      if (!preds) {
+                          console.log("[Debug] ❌ Could not find this file name in the JSON keys!");
+                          return results?.annotations?.keypoints ?? undefined;
+                      }
+                      console.log("[Debug] ✅ Match found! Injecting keypoints:", preds);
+                      return Object.entries(preds).map(([name, pt], i) => ({
+                        id: `kp-${i}`,
+                        name,
+                        x: pt.x,
+                        y: pt.y,
+                        confidence: pt.confidence,
+                      }));
+                    })()}
+                    initialPolygons={results?.annotations?.polygons}
+                  />
+                </div>
                ) : previewUrl ? (
                  <img
                    src={previewUrl}

@@ -9,6 +9,7 @@ export interface Keypoint {
   name: string;
   x: number; // image-space pixels
   y: number;
+  confidence?: number; // AI prediction confidence 0-1; absent = manually placed
 }
 
 export interface PolygonShape {
@@ -35,10 +36,17 @@ const POLY_PALETTE = [
   { fill: 'rgba(16, 185, 129, 0.15)', stroke: 'rgba(16, 185, 129, 0.9)' }, // Emerald Green  — Palatal_bone
 ];
 
-const KP_RING_NORMAL   = '#fbbf24'; // Vibrant Amber
+// ── Confidence colour tiers ────────────────────────────────────────────────────
+//  conf >= 0.85  → normal  (amber ring)
+//  0.70 <= conf < 0.85 → warning  (yellow ring)
+//  conf <  0.70  → critical (red ring + label flag)
+
+const KP_RING_CRITICAL = '#ef4444';  // Red    — conf < 0.70
+const KP_RING_WARNING  = '#eab308';  // Yellow — 0.70 ≤ conf < 0.85
+const KP_RING_NORMAL   = '#fbbf24';  // Amber  — conf ≥ 0.85
 const KP_DOT_NORMAL    = '#ffffff';
 const KP_RING_SELECTED = '#ffffff';
-const KP_DOT_SELECTED  = '#f59e0b'; // Deep glowing Amber
+const KP_DOT_SELECTED  = '#f59e0b';
 
 // ── Correct clinical landmark defaults (normalised 0–1 for lateral ceph) ─────
 
@@ -436,15 +444,62 @@ export default function CephCanvasEditor({
               {/* ── Keypoints ─────────────────────────────────────────────── */}
               {showLandmarks && keypoints.map((kp) => {
                 const [kx, ky] = toContent(kp.x, kp.y);
-                const isSel    = selectedId === kp.id;
+                const isSel = selectedId === kp.id;
+                const conf  = kp.confidence;
+
+                // Three-tier confidence tier
+                const isCritical = conf !== undefined && conf < 0.70;
+                const isWarning  = conf !== undefined && conf >= 0.70 && conf < 0.85;
+
+                // Ring colour: critical > warning > normal (selected overrides all)
+                const ringColor = isSel
+                  ? KP_RING_SELECTED
+                  : isCritical ? KP_RING_CRITICAL
+                  : isWarning  ? KP_RING_WARNING
+                  : KP_RING_NORMAL;
+
+                if (isCritical) {
+                  console.warn(
+                    `[CephEditor] ⚠ CRITICAL low confidence — "${kp.name}": conf=${conf?.toFixed(3)} < 0.70  ` +
+                    `(x=${kp.x.toFixed(1)}, y=${kp.y.toFixed(1)}). Manual review required.`
+                  );
+                } else if (isWarning) {
+                  console.warn(
+                    `[CephEditor] ⚠ Low confidence — "${kp.name}": conf=${conf?.toFixed(3)} < 0.85. ` +
+                    `Review recommended.`
+                  );
+                }
+
                 return (
                   <Group key={kp.id}>
+                    {/* Critical outer ring — red */}
+                    {isCritical && (
+                      <Circle
+                        x={kx} y={ky}
+                        radius={(pointSize + 5) / stageScale}
+                        stroke={KP_RING_CRITICAL}
+                        strokeWidth={2.0 / stageScale}
+                        opacity={0.9}
+                        listening={false}
+                      />
+                    )}
+                    {/* Warning outer ring — yellow (subtle, wider) */}
+                    {isWarning && (
+                      <Circle
+                        x={kx} y={ky}
+                        radius={(pointSize + 4) / stageScale}
+                        stroke={KP_RING_WARNING}
+                        strokeWidth={1.5 / stageScale}
+                        opacity={0.8}
+                        listening={false}
+                      />
+                    )}
                     <Circle
                       x={kx} y={ky}
                       radius={pointSize / stageScale}
                       hitStrokeWidth={20 / stageScale}
                       fill={isSel ? KP_DOT_SELECTED : KP_DOT_NORMAL}
-                      stroke={isSel ? KP_RING_SELECTED : KP_RING_NORMAL}
+                      stroke={ringColor}
                       strokeWidth={1.5 / stageScale}
                       draggable
                       onDragEnd={(e) => moveKp(kp.id, e)}
@@ -452,11 +507,15 @@ export default function CephCanvasEditor({
                       onMouseEnter={(e) => setCursor(e, 'move')}
                       onMouseLeave={(e) => setCursor(e, 'grab')}
                     />
-                    {/* Keypoint label — shadow replaces stroke for legibility */}
+                    {/* Keypoint label */}
                     <Text
                       x={kx + (8 / stageScale)} y={ky - (6 / stageScale)}
-                      text={kp.name} fontSize={10 / stageScale} fontStyle="bold"
-                      fill="white"
+                      text={
+                        kp.name +
+                        (isCritical ? ' ⚠ CRITICAL' : isWarning ? ' ⚠' : '')
+                      }
+                      fontSize={10 / stageScale} fontStyle="bold"
+                      fill={isCritical ? '#fca5a5' : isWarning ? '#fde68a' : 'white'}
                       shadowColor="black" shadowBlur={4} shadowOpacity={1}
                       shadowOffsetX={1} shadowOffsetY={1}
                       listening={false}
