@@ -11,7 +11,7 @@ class SoftArgmax2D(nn.Module):
     Differentiable soft-argmax for sub-pixel keypoint localization.
     Replaces naive argmax which is quantized to integer heatmap cells.
 
-   forward(heatmaps, input_size) -> (coords [B, N, 2], confidence [B, N])
+    forward(heatmaps, input_size) -> (coords [B, N, 2], confidence [B, N])
     """
 
     def __init__(self, temperature: float = 0.1):

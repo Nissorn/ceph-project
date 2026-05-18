@@ -158,10 +158,10 @@ def evaluate(
             # Soft-argmax coordinates
             coords_soft, confidence = decode_heatmaps(pred_heatmaps.cpu(), input_size)
 
-            # Hard-argmax coordinates
+            # Hard-argmax coordinates (for mode-collapse detection only)
             B, N, H, W = pred_heatmaps.shape
-            conf = torch.sigmoid(pred_heatmaps.cpu())
-            flat = conf.view(B * N, -1)
+            raw_conf = torch.sigmoid(pred_heatmaps.cpu())
+            flat = raw_conf.view(B * N, -1)
             _, flat_idx = flat.max(dim=-1)
             x_argmax = (flat_idx % W).float() / W * input_size[1]
             y_argmax = (flat_idx // W).float() / H * input_size[0]
@@ -185,10 +185,6 @@ def evaluate(
                     mm_per_px,
                 )
                 argmax_errors.append(argmax_err)
-
-                # Track coordinates for mode-collapse detection
-                all_coords.append(coords_argmax[b].numpy())
-                all_gt.append(keypoints_gt[b].numpy())
 
     return soft_errors, argmax_errors, all_coords, all_gt
 
@@ -386,13 +382,16 @@ def run_kfold_training(
         # validation images. If stddev is very low (< 5 px), the model is
         # predicting a static spatial mean — it has memorized absolute positions.
         import numpy as np
-        all_coords_arr = np.stack(fold_coords_final, axis=0)   # [N_img, 10, 2]
-        all_gt_arr     = np.stack(fold_gt_final, axis=0)        # [N_img, 10, 2]
-        pred_std = all_coords_arr.std(axis=0)                   # [10, 2] per kp
-        gt_std   = all_gt_arr.std(axis=0)
-        min_pred_std_px = float(pred_std.min())
-        min_gt_std_px   = float(gt_std.min())
-        # mode_collapse = min_pred_std_px < 10.0  # < 10px = collapse
+        if fold_coords_final:
+            all_coords_arr = np.stack(fold_coords_final, axis=0)   # [N_img, 10, 2]
+            all_gt_arr     = np.stack(fold_gt_final, axis=0)        # [N_img, 10, 2]
+            pred_std = all_coords_arr.std(axis=0)                   # [10, 2] per kp
+            gt_std   = all_gt_arr.std(axis=0)
+            min_pred_std_px = float(pred_std.min())
+            min_gt_std_px   = float(gt_std.min())
+        else:
+            min_pred_std_px = 0.0
+            min_gt_std_px   = 0.0
         print(f"  [Fold {fold_idx+1}] Coord stddev — pred min: {min_pred_std_px:.1f}px, "
               f"gt min: {min_gt_std_px:.1f}px")
 
