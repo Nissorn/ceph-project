@@ -3,6 +3,7 @@ Outputs heatmaps [B, K, H, W] for use with heatmap loss + decoding."""
 
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 
 
 NUM_KEYPOINTS = 10
@@ -40,8 +41,6 @@ class HeatmapHead(nn.Module):
       → 4× transposed_conv2d layers (each 2× spatial upscale)
          16→32→64→128→256
       → Conv2d(256, num_keypoints, 1x1)
-
-    vs old head: single bilinear 16→128 (8×) which was too coarse.
     """
 
     def __init__(self, in_channels: int = 2048, num_keypoints: int = NUM_KEYPOINTS):
@@ -56,27 +55,20 @@ class HeatmapHead(nn.Module):
 
         # Learned upsampling via transposed convolutions
         # 16 → 32 → 64 → 128 → 256 (4 stages, each 2×)
-        # Note: Dropout (not Dropout2d) preserves spatial activation patterns.
-        # Dropout2d zeroed entire channels, disrupting the fine-grained spatial
-        # structure needed for sub-pixel landmark localization.
         self.up1 = nn.ConvTranspose2d(256, 256, kernel_size=4, stride=2, padding=1, bias=False)
-        self.drop1 = nn.Dropout(0.1)
         self.up2 = nn.ConvTranspose2d(256, 256, kernel_size=4, stride=2, padding=1, bias=False)
-        self.drop2 = nn.Dropout(0.1)
         self.up3 = nn.ConvTranspose2d(256, 256, kernel_size=4, stride=2, padding=1, bias=False)
-        self.drop3 = nn.Dropout(0.1)
         self.up4 = nn.ConvTranspose2d(256, 256, kernel_size=4, stride=2, padding=1, bias=False)
-        self.drop4 = nn.Dropout(0.1)
 
         # Final 1×1 to produce per-keypoint channels
         self.head = nn.Conv2d(256, num_keypoints, kernel_size=1)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         x = self.reduce(x)      # [B, 256, 16, 16]
-        x = self.drop1(self.up1(x))         # [B, 256, 32, 32]
-        x = self.drop2(self.up2(x))         # [B, 256, 64, 64]
-        x = self.drop3(self.up3(x))         # [B, 256, 128, 128]
-        x = self.drop4(self.up4(x))         # [B, 128, 256, 256]
+        x = F.relu(self.up1(x)) # [B, 256, 32, 32]
+        x = F.relu(self.up2(x)) # [B, 256, 64, 64]
+        x = F.relu(self.up3(x)) # [B, 256, 128, 128]
+        x = F.relu(self.up4(x)) # [B, 256, 256, 256]
         x = self.head(x)        # [B, K, 256, 256]
         return x
 
