@@ -136,25 +136,42 @@ class HeatmapHead(nn.Module):
         self.up3 = nn.ConvTranspose2d(256, 256, kernel_size=4, stride=2, padding=1, bias=False)
         self.up4 = nn.ConvTranspose2d(256, 256, kernel_size=4, stride=2, padding=1, bias=False)
 
-        # Final 1×1 to produce per-keypoint channels
+        # Final 1×1 to produce per-keypoint heatmaps
         self.head = nn.Conv2d(256, num_keypoints, kernel_size=1)
 
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        # ── EUPE Uncertainty Head ──────────────────────────────────────────────
+        # Lightweight head predicting per-landmark uncertainty σ.
+        # Architecture: [B, 256, 256, 256] → GlobalAvgPool → [B, 256]
+        #   → Linear(256, num_keypoints) → [B, K] raw uncertainty scores
+        # σ = softplus(raw) to ensure σ > 0.
+        # Used in loss: L_eupe = (1/σ²) * L_mse + λ * log(σ)
+        self.uncertainty_pool = nn.AdaptiveAvgPool2d(1)
+        self.uncertainty_fc = nn.Linear(256, num_keypoints)
+
+    def forward(self, x: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
         x = self.reduce(x)      # [B, 256, 16, 16]
         x = self.cbam(x)        # [B, 256, 16, 16] — channel + spatial recalibration
         x = F.relu(self.up1(x)) # [B, 256, 32, 32]
         x = F.relu(self.up2(x)) # [B, 256, 64, 64]
         x = F.relu(self.up3(x)) # [B, 256, 128, 128]
         x = F.relu(self.up4(x)) # [B, 256, 256, 256]
-        x = self.head(x)        # [B, K, 256, 256]
-        return x
+
+        heatmaps = self.head(x)  # [B, K, 256, 256]
+
+        # EUPE uncertainty: pool 256×256 features → [B, 256] → [B, K] uncertainty
+        u = self.uncertainty_pool(x)            # [B, 256, 1, 1]
+        u = u.view(u.size(0), -1)                # [B, 256]
+        uncertainty = F.softplus(self.uncertainty_fc(u))  # [B, K], σ > 0
+
+        return heatmaps, uncertainty
 
 
 class CephalometricModel(nn.Module):
     """
     Wraps HRNet-W32 backbone + HeatmapHead.
 
-    Forward: [B, 3, 512, 512] → [B, K, 256, 256] heatmaps.
+    Forward: [B, 3, 512, 512] → (heatmaps [B, K, 256, 256], uncertainty [B, K])
+    Uncertainty values σ_k encode per-landmark prediction confidence.
     Use heatmap.py decode functions to extract (x, y) + confidence.
     """
 
@@ -164,7 +181,7 @@ class CephalometricModel(nn.Module):
         self.head = HeatmapHead(in_channels=2048, num_keypoints=num_keypoints)
         self.num_keypoints = num_keypoints
 
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
-        features = self.backbone(x)          # [B, 2048, 16, 16]
-        heatmaps = self.head(features)       # [B, K, 256, 256]
-        return heatmaps
+    def forward(self, x: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
+        features = self.backbone(x)           # [B, 2048, 16, 16]
+        heatmaps, uncertainty = self.head(features)  # [B, K, 256, 256], [B, K]
+        return heatmaps, uncertainty

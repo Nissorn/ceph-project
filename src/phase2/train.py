@@ -11,7 +11,7 @@ from tqdm import tqdm
 
 from src.phase2.dataset import CephalometricDataset, get_kfold_splits
 from src.phase2.heatmap import encode_heatmaps, decode_heatmaps
-from src.phase2.loss import AdaptiveWingLoss
+from src.phase2.loss import AdaptiveWingLoss, EUPELoss
 from src.phase2.metrics import radial_error, compute_all_metrics
 from src.phase2.model import CephalometricModel
 from src.utils.io import load_config
@@ -83,10 +83,12 @@ def train_one_epoch(
     sigma: float,
     input_size: tuple[int, int],
     mixup_alpha: float = 0.0,
+    use_eupe: bool = False,
 ) -> float:
     model.train()
     total_loss = 0.0
     criterion = AdaptiveWingLoss()
+    eupe_criterion = EUPELoss(reg_lambda=0.1)
     mixup_beta = torch.distributions.Beta(mixup_alpha, mixup_alpha) if mixup_alpha > 0 else None
     np = __import__("numpy")
 
@@ -113,7 +115,12 @@ def train_one_epoch(
             __import__("numpy").stack(gt_heatmaps, axis=0)
         ).to(device)
 
-        pred_heatmaps = model(imgs)
+        # EUPE model returns (heatmaps, uncertainty); standard model returns heatmaps only
+        if use_eupe:
+            pred_heatmaps, uncertainty = model(imgs)
+        else:
+            pred_heatmaps = model(imgs)
+            uncertainty = None
 
         if pred_heatmaps.shape[-2:] != gt_tensor.shape[-2:]:
             pred_heatmaps = torch.nn.functional.interpolate(
@@ -121,9 +128,15 @@ def train_one_epoch(
             )
 
         mask = torch.from_numpy(valid_np).bool().to(device)
-        loss = criterion(pred_heatmaps, gt_tensor, mask)
+
+        if use_eupe:
+            loss, _ = eupe_criterion(pred_heatmaps, gt_tensor, uncertainty, mask)
+        else:
+            loss = criterion(pred_heatmaps, gt_tensor, mask)
+
         optimizer.zero_grad()
         loss.backward()
+        torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=5.0)
         optimizer.step()
         total_loss += loss.item()
 
@@ -148,7 +161,12 @@ def evaluate(
     with torch.no_grad():
         for imgs, keypoints_gt, valid_mask, metas in loader:
             imgs = imgs.to(device)
-            pred_heatmaps = model(imgs)
+            output = model(imgs)
+            # EUPE model returns (heatmaps, uncertainty); standard returns heatmaps
+            if isinstance(output, tuple):
+                pred_heatmaps = output[0]
+            else:
+                pred_heatmaps = output
 
             if pred_heatmaps.shape[-2:] != (heatmap_size[0], heatmap_size[1]):
                 pred_heatmaps = torch.nn.functional.interpolate(
@@ -320,6 +338,8 @@ def run_kfold_training(
             train_loss = train_one_epoch(
                 model, train_loader, optimizer, device,
                 heatmap_size, cfg["model"]["sigma"], input_size,
+                mixup_alpha=cfg["training"].get("mixup_alpha", 0.0),
+                use_eupe=cfg["training"].get("use_eupe", False),
             )
             scheduler.step()
 
