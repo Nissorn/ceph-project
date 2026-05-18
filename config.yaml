@@ -31,6 +31,13 @@ model:
   input_size: [512, 512]
   heatmap_size: [256, 256]
   sigma: 3.0
+  # Landmark-specific sigmas for adaptive heatmap generation.
+  # Small sigma (sharp): easy/anterior landmarks — tight Gaussian for precision.
+  # Large sigma (diffuse): hard/posterior landmarks — forgiving for noisy regions.
+  # Format: list of 10 floats aligned with keypoints.names order.
+  # Keypoints: Upper_tip(0), Upper_apex(1), Labial_midroot(2), Labial_crest(3),
+  #            Palatal_midroot(4), Palatal_crest(5), ANS(6), PNS(7), LB(8), PB(9)
+  landmark_sigmas: [2.0, 3.5, 2.5, 2.0, 3.0, 2.0, 4.5, 4.5, 4.0, 5.0]
 
 training:
   batch_size: 4

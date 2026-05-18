@@ -4,6 +4,7 @@ import os
 from pathlib import Path
 from typing import Optional
 
+import numpy as np
 import torch
 import torch.nn as nn
 from torch.utils.data import DataLoader
@@ -84,7 +85,14 @@ def train_one_epoch(
     input_size: tuple[int, int],
     mixup_alpha: float = 0.0,
     use_eupe: bool = False,
+    sigma_map: np.ndarray | list | None = None,
 ) -> float:
+    """
+    sigma_map: Optional [N] per-landmark sigma array for adaptive heatmap generation.
+               When provided, sigma_map[i] is used for landmark i instead of sigma.
+               Small values (2.0-2.5): sharp for anterior landmarks.
+               Large values (4.0-5.0): diffuse for posterior/low-contrast landmarks.
+    """
     model.train()
     total_loss = 0.0
     criterion = AdaptiveWingLoss()
@@ -109,18 +117,17 @@ def train_one_epoch(
 
         gt_heatmaps = []
         for b in range(len(keypoints_np)):
-            hm = encode_heatmaps(keypoints_np[b], valid_np[b], heatmap_size, sigma, input_size)
+            hm = encode_heatmaps(keypoints_np[b], valid_np[b], heatmap_size, sigma, input_size, sigma_map)
             gt_heatmaps.append(hm)
         gt_tensor = torch.from_numpy(
             __import__("numpy").stack(gt_heatmaps, axis=0)
         ).to(device)
 
-        # EUPE model returns (heatmaps, uncertainty); standard model returns heatmaps only
+        # Model ALWAYS returns (heatmaps, uncertainty) — unpack in both paths
         if use_eupe:
             pred_heatmaps, uncertainty = model(imgs)
         else:
-            pred_heatmaps = model(imgs)
-            uncertainty = None
+            pred_heatmaps, _ = model(imgs)
 
         if pred_heatmaps.shape[-2:] != gt_tensor.shape[-2:]:
             pred_heatmaps = torch.nn.functional.interpolate(
@@ -335,11 +342,18 @@ def run_kfold_training(
         epochs_no_improve = 0
 
         for epoch in range(total_epochs):
+            # Extract landmark-specific sigma map if defined in config
+            sigma_map = cfg["model"].get("landmark_sigmas")
+            if sigma_map is not None:
+                # Convert to numpy inside train_one_epoch where np is available
+                print(f"  [Adaptive sigma] Using landmark-specific sigmas: {dict(zip(cfg['keypoints']['names'], sigma_map))}")
+
             train_loss = train_one_epoch(
                 model, train_loader, optimizer, device,
                 heatmap_size, cfg["model"]["sigma"], input_size,
                 mixup_alpha=cfg["training"].get("mixup_alpha", 0.0),
                 use_eupe=cfg["training"].get("use_eupe", False),
+                sigma_map=sigma_map,
             )
             scheduler.step()
 
@@ -558,9 +572,16 @@ def run_kfold_training(
                 phase = 2
                 print(f"  [Fold {fold_idx+1}] Backbone unfrozen at epoch {epoch+1}, LR head={lr*0.5:.6f}, backbone={lr*0.1:.6f}")
 
+            # Extract landmark-specific sigma map if defined in config
+            sigma_map = cfg["model"].get("landmark_sigmas")
+            if sigma_map is not None:
+                # Convert to numpy inside train_one_epoch where np is in scope
+                print(f"  [Adaptive sigma] Using landmark-specific sigmas: {dict(zip(cfg['keypoints']['names'], sigma_map))}")
+
             train_loss = train_one_epoch(
                 model, train_loader, optimizer, device,
                 heatmap_size, cfg["model"]["sigma"], input_size,
+                sigma_map=sigma_map,
             )
             scheduler.step()
 
