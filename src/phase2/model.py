@@ -1,4 +1,4 @@
-"""HRNet-W32 wrapper for 10-keypoint cephalometric landmark detection.
+"""HRNet-W32 + CBAM wrapper for 10-keypoint cephalometric landmark detection.
 Outputs heatmaps [B, K, H, W] for use with heatmap loss + decoding."""
 
 import torch
@@ -7,6 +7,78 @@ import torch.nn.functional as F
 
 
 NUM_KEYPOINTS = 10
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# CBAM: Convolutional Block Attention Module
+# Paper: arxiv:1807.06521 — helps model focus on subtle bone edges at
+# posterior landmarks (ANS, PNS, PB, LB) and suppress soft-tissue noise.
+# ─────────────────────────────────────────────────────────────────────────────
+
+class ChannelAttention(nn.Module):
+    """
+    Channel attention: exploit inter-channel relationship to recalibrate
+    feature importance. Uses both max-pool and avg-pool paths + shared MLP.
+    """
+
+    def __init__(self, channels: int, reduction: int = 16):
+        super().__init__()
+        self.shared_mlp = nn.Sequential(
+            nn.Linear(channels, channels // reduction, bias=False),
+            nn.ReLU(inplace=True),
+            nn.Linear(channels // reduction, channels, bias=False),
+        )
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        # x shape: [B, C, H, W]
+        b, c, h, w = x.shape
+
+        # Average-pool + max-pool over spatial dimensions → [B, C]
+        avg_out = self.shared_mlp(x.mean(dim=[2, 3]))      # [B, C]
+        max_out = self.shared_mlp(x.amax(dim=[2, 3]))     # [B, C]
+
+        # Combine and sigmoid-gate each channel
+        attention = torch.sigmoid(avg_out + max_out)      # [B, C]
+        return x * attention.unsqueeze(-1).unsqueeze(-1)  # [B, C, H, W]
+
+
+class SpatialAttention(nn.Module):
+    """
+    Spatial attention: exploit intra-spatial relationship to highlight
+    discriminative landmark regions and suppress irrelevant background.
+    """
+
+    def __init__(self, kernel_size: int = 7):
+        super().__init__()
+        self.conv = nn.Conv2d(
+            2, 1, kernel_size=kernel_size, padding=kernel_size // 2, bias=False
+        )
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        # x shape: [B, C, H, W]
+        # Pool along channel axis → [B, 1, H, W]
+        avg_out = x.mean(dim=1, keepdim=True)   # avg over channels
+        max_out = x.amax(dim=1, keepdim=True)    # max over channels
+        spatial_input = torch.cat([avg_out, max_out], dim=1)
+        attention = torch.sigmoid(self.conv(spatial_input))  # [B, 1, H, W]
+        return x * attention  # [B, C, H, W]
+
+
+class CBAM(nn.Module):
+    """
+    CBAM = Channel Attention → Spatial Attention (sequential).
+    Injects after any feature tensor to recalibrate channel + spatial response.
+    """
+
+    def __init__(self, channels: int, reduction: int = 16, spatial_kernel: int = 7):
+        super().__init__()
+        self.channel_attn = ChannelAttention(channels, reduction)
+        self.spatial_attn = SpatialAttention(spatial_kernel)
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        x = self.channel_attn(x)
+        x = self.spatial_attn(x)
+        return x
 
 
 def build_hrnet(num_keypoints: int = NUM_KEYPOINTS, pretrained: bool = True) -> nn.Module:
@@ -53,6 +125,10 @@ class HeatmapHead(nn.Module):
             nn.ReLU(inplace=True),
         )
 
+        # CBAM recalibrates 256-channel features before spatial upsampling.
+        # Helps the model focus on bone edges vs soft-tissue at posterior landmarks.
+        self.cbam = CBAM(channels=256, reduction=16, spatial_kernel=7)
+
         # Learned upsampling via transposed convolutions
         # 16 → 32 → 64 → 128 → 256 (4 stages, each 2×)
         self.up1 = nn.ConvTranspose2d(256, 256, kernel_size=4, stride=2, padding=1, bias=False)
@@ -65,6 +141,7 @@ class HeatmapHead(nn.Module):
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         x = self.reduce(x)      # [B, 256, 16, 16]
+        x = self.cbam(x)        # [B, 256, 16, 16] — channel + spatial recalibration
         x = F.relu(self.up1(x)) # [B, 256, 32, 32]
         x = F.relu(self.up2(x)) # [B, 256, 64, 64]
         x = F.relu(self.up3(x)) # [B, 256, 128, 128]
