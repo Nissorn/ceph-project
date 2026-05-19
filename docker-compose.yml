@@ -1,16 +1,56 @@
+# docker-compose.yml — Cephalometric Landmark Detection full-stack
+#
+# Architecture:
+#   api  (FastAPI)  — HRNet-W32 inference engine, port 8000
+#   web  (Astro)    — static SPA, port 4321
+#
+# Model weights (outputs/checkpoints/fold*.pth) are mounted as a volume
+# and NOT baked into the image layer (per product.md guardrails).
+
 services:
+  # ── FastAPI inference service ───────────────────────────────────────────────
   api:
     build:
       context: ./backend
       dockerfile: Dockerfile
     ports:
       - "8000:8000"
+    environment:
+      # Override inference_service.py default path to match Docker volume mount.
+      # Must match the volume target below: /app/model-weights/checkpoints
+      MODEL_CHECKPOINT_DIR: /app/model-weights/checkpoints
+    volumes:
+      - ./outputs/checkpoints:/app/model-weights/checkpoints:ro
+    # Torch device detection is automatic: MPS → CUDA → CPU.
+    # No GPU/TPU configuration needed for standard deployments.
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/api/v1/health')"]
+      interval: 30s
+      timeout: 10s
+      start_period: 40s
+      retries: 3
+    restart: unless-stopped
 
+  # ── Astro static frontend ───────────────────────────────────────────────────
   web:
     build:
       context: ./frontend
       dockerfile: Dockerfile
+      args:
+        VITE_API_URL: http://localhost:8000
     ports:
       - "4321:4321"
     depends_on:
-      - api
+      api:
+        condition: service_healthy
+    environment:
+      # VITE_API_URL is baked into the JS bundle at Astro build time.
+      # Change VITE_API_URL arg above for different backend host in production.
+      NODE_ENV: production
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:4321/"]
+      interval: 30s
+      timeout: 5s
+      start_period: 10s
+      retries: 3
+    restart: unless-stopped

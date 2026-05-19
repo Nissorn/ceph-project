@@ -22,9 +22,13 @@ ROOT = Path(__file__).resolve().parent.parent.parent.parent   # /home/iddi/ceph-
 sys.path.insert(0, str(ROOT))
 
 # ── stdlib ─────────────────────────────────────────────────────────────────────
-import numpy as np
+import os
+from io import BytesIO
+from pathlib import Path
+from typing import Any
 
 # ── third-party ───────────────────────────────────────────────────────────────
+import numpy as np
 import torch
 import torch.nn.functional as F
 import cv2
@@ -178,7 +182,12 @@ class InferenceService:
     Checkpoint: outputs/checkpoints/fold1_best.pth
     """
 
-    CHECKPOINT_PATH = ROOT / "outputs" / "checkpoints" / "fold1_best.pth"
+    CHECKPOINT_PATH = Path(
+        os.environ.get(
+            "MODEL_CHECKPOINT_DIR",
+            str(ROOT / "outputs" / "checkpoints"),
+        )
+    ) / "fold1_best.pth"
 
     def __init__(self):
         self._device = self._detect_device()
