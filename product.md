@@ -10,38 +10,62 @@ alveolar bone thickness assessment.
 
 ## Phase 3 — Biomechanics Engine
 
-### Bone Thickness Pipeline Comparison
+### Bone Thickness: Plan B and Plan C in Parallel
 
-Three approaches were evaluated for computing alveolar bone thickness
-(Labial and Palatal) relative to the upper central incisor root.
+Two approaches run in parallel to serve different purposes:
 
-| Method | Description | Risk |
+| Method | Purpose | Output |
 |---|---|---|
-| Plan A | 3-level perpendiculars (cervical / middle / apical) | Lines may miss deformed bone |
-| Plan B | Absolute minimum distance (no offset) | Hyper-thin crest edge biases result |
-| **Plan C** | **Minimum distance with crest offset** | **Selected — most robust** |
+| **Plan B** | Frontend visualization — 3 horizontal measurement lines | `lines_3_level`: cervical / middle / apical distances for UI |
+| **Plan C** | Clinical classification — biometric safety | `classification`: minimum distance + 4-tier tier |
 
 ---
 
-### Idea C: Minimum Distance with Crest Offset
+### Plan B — 3-Level Root Line Distances (for UI Visualization)
 
-**Core Logic:** Extract the tooth root contour (from Crest to Apex) and compute the
-exact Minimum Euclidean Distance from each filtered tooth root point to the Labial
-and Palatal bone contours.
+**Purpose:** The Doctor requested display of 3 horizontal/perpendicular measurement
+lines at cervical, middle, and apical root levels. Plan B provides these for frontend
+rendering and reporting.
 
-#### Crest Offset Protection Feature
+**Core Logic:** The U1 long axis (Upper_tip → Upper_apex) is divided into thirds:
 
-A mandatory crest offset exclusion zone is applied before the minimum-distance search.
-The alveolar crest (Labial_crest / Palatal_crest) is the anatomical region where the
-cortical bone is normally the thinnest — this does not represent functional bone
-thickness and must be excluded.
+```
+Cervical  → 1/3 down from tip  (near Labial_crest / Palatal_crest)
+Middle    → 2/3 down from tip  (at midroot level)
+Apical    → at the root apex
+```
 
-- **Offset:** 1–2 mm upward (cervical direction) from the crest landmark
-- **Implementation:** Only tooth contour points with `y > (crest_y + offset_px)` are used
-- **Fallback:** If all points are filtered out, all tooth points are considered
+At each level a perpendicular projection is cast through the tooth root and the
+Labial and Palatal bone contours are searched for the width occupied by cortical bone.
+The width (max projection − min projection) on each side is returned in mm.
 
-#### Algorithm (Pipeline C)
+**API Response Shape:**
+```json
+{
+  "bone_thickness": {
+    "lines_3_level": {
+      "cervical": { "lb_mm": 0.636, "pb_mm": 0.636 },
+      "middle":   { "lb_mm": 0.636, "pb_mm": 0.636 },
+      "apical":   { "lb_mm": 0.636, "pb_mm": 0.636 }
+    }
+  }
+}
+```
 
+---
+
+### Plan C — Minimum Distance with Crest Offset (for Clinical Classification)
+
+**Purpose:** Core mathematical logic for the 4-tier biometric safety classification.
+Uses the minimum contour-to-contour distance with a crest offset to bypass the
+anatomically thin alveolar crest edge.
+
+**Crest Offset Protection Feature:** A mandatory 1–2 mm upward offset from the
+Labial_crest / Palatal_crest landmark excludes the hyper-thin crest region from
+the minimum-distance search. This prevents the crest from artificially biasing
+the result downward.
+
+**Algorithm:**
 ```
 1. Input: tooth_contour (N×2), bone_contour (M×2), crest_landmark (x,y), offset_mm
 2. Compute offset_px = offset_mm / mm_per_pixel
@@ -52,33 +76,75 @@ thickness and must be excluded.
 7. Record closest tooth point and closest bone point for audit
 ```
 
-#### 4-Tier Classification
+**API Response Shape:**
+```json
+{
+  "bone_thickness": {
+    "classification": {
+      "labial_min_mm":  4.727,
+      "palatal_min_mm": 5.651,
+      "tier":           "Thick Bone",
+      "is_vulnerable":  false,
+      "classification_note": "Thick bone: LB=4.727mm, PB=5.651mm (both sides >= 0.5 mm)"
+    }
+  }
+}
+```
+
+**4-Tier Classification:**
 
 | Tier | Rule | Clinical Implication |
 |---|---|---|
 | Thick Bone | LB ≥ 0.5 mm AND PB ≥ 0.5 mm | Normal bone support; standard biomechanics |
-| Relatively Thick | (LB < 0.5 mm OR PB < 0.5 mm) but NOT both | One side is thinner; caution required |
+| Relatively Thick | (LB < 0.5 mm OR PB < 0.5 mm) but NOT both | One side thinner; caution required |
 | Thin Type | LB < 0.5 mm AND PB < 0.5 mm | Both sides thin; limited torque possible |
-| Vulnerably Thin | LB ≤ 0.2 mm OR PB ≤ 0.2 mm | High risk; require careful monitoring |
+| Vulnerably Thin | LB ≤ 0.2 mm OR PB ≤ 0.2 mm | High risk; requires careful monitoring |
 
 > **Note:** Vulnerably Thin overrides all other categories (highest priority).
+> **Pending Dr. Confirmation:** All threshold values (0.5 mm, 0.2 mm) pending formal annotation review.
 
-> **Pending Dr. Confirmation:** All threshold values (0.5 mm, 0.2 mm) are
-> pending formal annotation review from the Doctor before clinical use.
+---
 
-#### Mock Validation Engine
+### Complete API Response Shape (Both Plans)
 
-Pipeline C is currently scaffolded with a **mock validation engine** using synthetic
-numpy arrays representing tooth and bone contours. Real patient segmentation data
-(polygon annotations) from the Doctor has not yet been received.
+```json
+{
+  "bone_thickness": {
+    "lines_3_level": {
+      "cervical": { "lb_mm": 0.636, "pb_mm": 0.636 },
+      "middle":   { "lb_mm": 0.636, "pb_mm": 0.636 },
+      "apical":   { "lb_mm": 0.636, "pb_mm": 0.636 }
+    },
+    "classification": {
+      "labial_min_mm":  4.727,
+      "palatal_min_mm": 5.651,
+      "tier":           "Thick Bone",
+      "is_vulnerable":  false,
+      "classification_note": "Thick bone: LB=4.727mm, PB=5.651mm (both sides >= 0.5 mm)"
+    },
+    "crest_offset_mm": 1.5,
+    "mm_per_pixel": 0.0984
+  }
+}
+```
+
+---
+
+### Mock Validation Engine
+
+Both Plan B and Plan C are currently scaffolded with a **mock validation engine**
+using synthetic numpy arrays representing tooth and bone contours.
+Real patient segmentation data (polygon annotations) from the Doctor has not yet
+been received.
 
 The mock data validates:
-- Mathematical correctness of contour-to-contour distance calculation
-- Crest offset filtering logic
-- All 4-tier classification coverage
-- No None / zero-value errors in the pipeline
+- Mathematical correctness of Plan B perpendicular-width calculation
+- Mathematical correctness of Plan C contour-to-contour minimum distance
+- Crest offset filtering logic (Plan C)
+- All 4-tier classification coverage (Plan C)
+- Combined output shape from `compute_bone_thickness_full()`
 
-**Mock data locations:** `src/phase3/biomechanics.py` — Step 7 (smoke test)
+**Code location:** `src/phase3/biomechanics.py` — Steps 7 & 8 (smoke tests)
 
 ---
 
@@ -117,7 +183,7 @@ biomechanical categories and recommends preferred/avoided treatment approaches.
 
 - Phase 1: Landmark detection (heatmap-based CNN) — trained on synthetic + real data
 - Phase 2: Model training pipeline — MRE evaluation, argmax keypoint extraction
-- Phase 3: Superimposition + biomechanics — in progress
+- Phase 3: Superimposition + biomechanics — in progress (Plan B + Plan C parallel)
 - Phase 4: Output format and visualization — pending real data
 
 ## Data Rules
