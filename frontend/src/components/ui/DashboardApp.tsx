@@ -184,6 +184,7 @@ export default function DashboardApp() {
         mandibular_status,
         interpretation: payload.classification?.interpretation || payload.interpretation || payload.summary || 'Analysis completed successfully. Review extracted biomechanical structures below.',
         annotations: { keypoints: apiKeypoints, polygons: apiPolygons },
+        lines_3_level: payload.bone_thickness?.lines_3_level ?? null,
       };
 
       setResults(normalizedResults);
@@ -227,6 +228,7 @@ export default function DashboardApp() {
                 <div className="absolute inset-0 z-10">
                   <CephCanvasEditor
                     imageFile={file}
+                    boneThickness={results?.lines_3_level ?? undefined}
                     initialKeypoints={(() => {
                       console.log("[Debug] Uploaded file name:", file.name);
                       const preds = aiPredictions[file.name];

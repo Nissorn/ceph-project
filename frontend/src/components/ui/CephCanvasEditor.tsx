@@ -20,10 +20,18 @@ export interface PolygonShape {
   stroke: string;
 }
 
+// ── Plan B 3-level bone thickness lines from backend ─────────────────────────
+export interface Lines3Level {
+  cervical: { lb_x: number; lb_y: number; pb_x: number; pb_y: number; lb_mm: number; pb_mm: number; total_mm: number };
+  middle:   { lb_x: number; lb_y: number; pb_x: number; pb_y: number; lb_mm: number; pb_mm: number; total_mm: number };
+  apical:   { lb_x: number; lb_y: number; pb_x: number; pb_y: number; lb_mm: number; pb_mm: number; total_mm: number };
+}
+
 interface Props {
   imageFile: File;
   initialKeypoints?: Keypoint[];
   initialPolygons?: PolygonShape[];
+  boneThickness?: Lines3Level;   // Plan B — 3-level measurement lines
   onKeypointsChange?: (kps: Keypoint[]) => void;
   onPolygonsChange?: (polys: PolygonShape[]) => void;
 }
@@ -96,7 +104,7 @@ function nearestEdgeInsert(
 // ── Component ─────────────────────────────────────────────────────────────────
 
 export default function CephCanvasEditor({
-  imageFile, initialKeypoints, initialPolygons,
+  imageFile, initialKeypoints, initialPolygons, boneThickness,
   onKeypointsChange, onPolygonsChange,
 }: Props) {
   const containerRef  = useRef<HTMLDivElement>(null);
@@ -113,6 +121,7 @@ export default function CephCanvasEditor({
   const [stageScale, setStageScale]       = useState(1);
   const [showLandmarks, setShowLandmarks] = useState(true);
   const [showPolygons, setShowPolygons]   = useState(true);
+  const [showMeasurementLines, setShowMeasurementLines] = useState(true);
   const [pointSize, setPointSize]         = useState(4);
   const [debugInfo, setDebugInfo]         = useState({ x: 0, y: 0, imageX: 0, imageY: 0 });
   const [isDebugMode, setIsDebugMode]     = useState(false);
@@ -523,6 +532,72 @@ export default function CephCanvasEditor({
                   </Group>
                 );
               })}
+
+              {/* ── Plan B 3-level measurement lines (bone thickness) ─────────── */}
+              {showMeasurementLines && boneThickness && (() => {
+                const levels: Array<{
+                  key: 'cervical' | 'middle' | 'apical';
+                  label: string;
+                  color: string;
+                  dotFill: string;
+                }> = [
+                  { key: 'cervical', label: 'C', color: '#06b6d4', dotFill: '#67e8f9' },  // Cyan   — cervical
+                  { key: 'middle',   label: 'M', color: '#f472b6', dotFill: '#f9a8d4' },  // Pink   — middle
+                  { key: 'apical',   label: 'A', color: '#4ade80', dotFill: '#86efac' },  // Green  — apical
+                ];
+
+                return levels.map(({ key, label, color, dotFill }) => {
+                  const lv = boneThickness[key];
+                  if (!lv) return null;
+
+                  // Convert image-space coordinates → stage-space for rendering
+                  const [pb1x, pb1y] = toContent(lv.pb_x, lv.pb_y);
+                  const [lb1x, lb1y] = toContent(lv.lb_x, lv.lb_y);
+
+                  const SW = 1.5 / stageScale;   // stroke width (remains crisp under zoom)
+                  const dotR = 3.5 / stageScale;
+
+                  return (
+                    <Group key={key} listening={false}>
+                      {/* Main measurement line: palatal → labial */}
+                      <Line
+                        points={[pb1x, pb1y, lb1x, lb1y]}
+                        stroke={color}
+                        strokeWidth={SW}
+                        opacity={0.9}
+                      />
+                      {/* Endpoints: palatal (filled circle) */}
+                      <Line
+                        points={[pb1x - dotR, pb1y, pb1x + dotR, pb1y]}
+                        stroke={dotFill}
+                        strokeWidth={1 / stageScale}
+                        opacity={1}
+                      />
+                      {/* Endpoints: labial (filled circle) */}
+                      <Line
+                        points={[lb1x - dotR, lb1y, lb1x + dotR, lb1y]}
+                        stroke={dotFill}
+                        strokeWidth={1 / stageScale}
+                        opacity={1}
+                      />
+                      {/* Midpoint label: level abbreviation + total mm */}
+                      <Text
+                        x={(pb1x + lb1x) / 2 + (4 / stageScale)}
+                        y={(pb1y + lb1y) / 2 - (6 / stageScale)}
+                        text={`${label}: ${lv.total_mm.toFixed(1)}mm`}
+                        fontSize={10 / stageScale}
+                        fontStyle="bold"
+                        fill={color}
+                        shadowColor="black"
+                        shadowBlur={3 / stageScale}
+                        shadowOpacity={0.8}
+                        shadowOffsetX={1 / stageScale}
+                        shadowOffsetY={1 / stageScale}
+                      />
+                    </Group>
+                  );
+                });
+              })()}
             </Layer>
           </Stage>
         )}
@@ -611,6 +686,14 @@ export default function CephCanvasEditor({
                       className="accent-cyan-400 w-3 h-3 cursor-pointer"
                     />
                     Polygons
+                  </label>
+                  <label className="flex items-center gap-1 cursor-pointer select-none whitespace-nowrap">
+                    <input
+                      type="checkbox" checked={showMeasurementLines}
+                      onChange={(e) => setShowMeasurementLines(e.target.checked)}
+                      className="accent-pink-400 w-3 h-3 cursor-pointer"
+                    />
+                    Lines
                   </label>
                 </div>
 
