@@ -73,8 +73,8 @@ export default function UploadZone({ onFileSelect }: UploadZoneProps) {
     <div
       className={`flex flex-col items-center justify-center w-full h-full min-h-[500px] border-2 border-dashed rounded-2xl p-12 text-center cursor-pointer transition-all duration-300 overflow-hidden relative group ${
         isDragging
-          ? 'border-singapodent-accent bg-singapodent-accent/5 dark:bg-singapodent-accent/10 scale-[0.99] shadow-inner'
-          : 'border-slate-200 dark:border-slate-700/60 bg-slate-50 dark:bg-slate-800/40 hover:bg-slate-100/80 dark:hover:bg-slate-700/40 hover:border-slate-300 dark:hover:border-slate-600'
+          ? 'border-singapodent-accent bg-singapodent-accent/5 scale-[0.99] shadow-inner'
+          : 'border-slate-200 bg-slate-50 hover:bg-slate-100/80 hover:border-slate-300'
       }`}
       onClick={() => fileInputRef.current?.click()}
       onDragOver={handleDragOver}
@@ -83,23 +83,23 @@ export default function UploadZone({ onFileSelect }: UploadZoneProps) {
       onDrop={handleDrop}
     >
       {/* Premium Visual Glow/Gradient Background */}
-      <div className="absolute inset-0 bg-gradient-to-b from-transparent via-transparent to-slate-100/30 dark:to-slate-900/20 pointer-events-none" />
+      <div className="absolute inset-0 bg-gradient-to-b from-transparent via-transparent to-slate-100/30 pointer-events-none" />
 
       {/* Elegant Error Banner */}
       {error && (
         <div 
-          className="absolute top-6 left-6 right-6 z-20 flex items-center justify-between bg-red-50/95 dark:bg-red-950/90 border border-red-200 dark:border-red-800/80 text-red-600 dark:text-red-300 px-4 py-3 rounded-xl shadow-sm backdrop-blur-sm transition-all duration-200 text-sm text-left"
+          className="absolute top-6 left-6 right-6 z-20 flex items-center justify-between bg-red-50/95 border border-red-200 text-red-600 px-4 py-3 rounded-xl shadow-sm backdrop-blur-sm transition-all duration-200 text-sm text-left"
           onClick={(e) => e.stopPropagation()}
         >
           <div className="flex items-center gap-3">
-            <svg className="w-5 h-5 shrink-0 text-red-500 dark:text-red-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <svg className="w-5 h-5 shrink-0 text-red-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
             </svg>
             <span className="font-medium">{error}</span>
           </div>
           <button 
             onClick={() => setError(null)}
-            className="p-1.5 hover:bg-red-100 dark:hover:bg-red-900/50 rounded-lg transition-colors"
+            className="p-1.5 hover:bg-red-100 rounded-lg transition-colors"
             title="Dismiss error"
           >
             <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -117,22 +117,22 @@ export default function UploadZone({ onFileSelect }: UploadZoneProps) {
         accept="image/png, image/jpeg, .dcm, .dicom" 
       />
 
-      <div className={`bg-white dark:bg-slate-800/80 border w-16 h-16 flex items-center justify-center rounded-xl mb-6 transition-all duration-300 ease-out z-10 shadow-sm ${
+      <div className={`bg-white border w-16 h-16 flex items-center justify-center rounded-xl mb-6 transition-all duration-300 ease-out z-10 shadow-sm ${
         isDragging 
           ? 'border-singapodent-accent text-singapodent-accent scale-110 shadow-md' 
-          : 'border-slate-100 dark:border-slate-700/80 text-singapodent-primary dark:text-singapodent-accent group-hover:scale-105'
+          : 'border-slate-100 text-singapodent-primary group-hover:scale-105'
       }`}>
         <svg className="w-8 h-8" fill="none" stroke="currentColor" viewBox="0 0 24 24">
           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12" />
         </svg>
       </div>
 
-      <h3 className="text-2xl font-light tracking-tight text-slate-800 dark:text-slate-200 mb-3 z-10">
+      <h3 className="text-2xl font-light tracking-tight text-slate-800 mb-3 z-10">
         {isDragging ? 'Drop Scan to Upload' : 'Upload Cephalogram Scan'}
       </h3>
 
-      <p className="text-sm font-medium text-slate-500 dark:text-slate-400 max-w-sm leading-relaxed z-10">
-        Drag and drop a medical scan here, or click to browse. Supports high-resolution <span className="text-slate-700 dark:text-slate-300 font-semibold">PNG</span>, <span className="text-slate-700 dark:text-slate-300 font-semibold">JPG</span>, and <span className="text-slate-700 dark:text-slate-300 font-semibold">DICOM</span> up to 50MB.
+      <p className="text-sm font-medium text-slate-500 max-w-sm leading-relaxed z-10">
+        Drag and drop a medical scan here, or click to browse. Supports high-resolution <span className="text-slate-700 font-semibold">PNG</span>, <span className="text-slate-700 font-semibold">JPG</span>, and <span className="text-slate-700 font-semibold">DICOM</span> up to 50MB.
       </p>
     </div>
   );

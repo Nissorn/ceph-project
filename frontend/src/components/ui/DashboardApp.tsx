@@ -205,7 +205,7 @@ export default function DashboardApp() {
     <div className="grid grid-cols-12 gap-8 h-full">
       {/* Left Panel - Image Viewer */}
       <div className="col-span-12 lg:col-span-8 flex flex-col h-full overflow-hidden relative">
-        <div className="bg-white dark:bg-slate-800/90 border border-slate-200 dark:border-slate-700/60 shadow-sm rounded-2xl p-3 flex-grow overflow-hidden flex flex-col relative">
+        <div className="bg-white border border-slate-200 shadow-sm rounded-2xl p-3 flex-grow overflow-hidden flex flex-col relative">
           
           {file ? (
             <div className="flex-1 min-h-0 relative flex items-center justify-center bg-slate-900 rounded-lg overflow-hidden group border border-slate-800/60">
@@ -228,10 +228,10 @@ export default function DashboardApp() {
                 <div className="absolute inset-0 z-10">
                   <CephCanvasEditor
                     imageFile={file}
-                    boneThickness={results?.bone_thickness?.lines_3_level ?? undefined}
+                    boneThickness={results?.lines_3_level ?? undefined}
                     initialKeypoints={(() => {
                       console.log("[Debug] Uploaded file name:", file.name);
-                      console.log("[Debug] bone_thickness.lines_3_level from API:", results?.bone_thickness?.lines_3_level);
+                      console.log("[Debug] bone_thickness.lines_3_level from API:", results?.lines_3_level);
                       const preds = aiPredictions[file.name];
                       if (!preds) {
                           console.log("[Debug] ❌ Could not find this file name in the JSON keys!");
@@ -290,7 +290,7 @@ export default function DashboardApp() {
           <button
             onClick={handleAnalyze}
             disabled={!file || isLoading}
-            className="w-full md:w-auto py-3.5 px-10 text-sm font-semibold bg-singapodent-accent text-singapodent-primary dark:text-white rounded-full shadow-sm hover:brightness-105 transition-all duration-150 disabled:opacity-40 disabled:cursor-not-allowed focus:outline-none focus:ring-2 focus:ring-singapodent-accent/50"
+            className="w-full md:w-auto py-3.5 px-10 text-sm font-semibold bg-singapodent-accent text-white rounded-full shadow-sm hover:brightness-105 transition-all duration-150 disabled:opacity-40 disabled:cursor-not-allowed focus:outline-none focus:ring-2 focus:ring-singapodent-accent/50"
           >
             {isLoading ? 'Processing Inference...' : 'Run AI Analysis'}
           </button>
@@ -302,12 +302,12 @@ export default function DashboardApp() {
       <div className="col-span-12 lg:col-span-4 h-full pb-20 overflow-y-auto pr-2 custom-scrollbar">
         <div className="flex flex-col gap-6 pt-2">
           <div className="pl-2 flex items-center justify-between">
-            <h2 className="text-xl font-light tracking-tight text-slate-800 dark:text-white">Clinical Assessment</h2>
-            <span className="text-xs font-medium text-slate-400 dark:text-slate-500 uppercase tracking-wider">Results</span>
+            <h2 className="text-xl font-light tracking-tight text-slate-800">Clinical Assessment</h2>
+            <span className="text-xs font-medium text-slate-400 uppercase tracking-wider">Results</span>
           </div>
           
           {!results && !isLoading && !error && (
-            <div className="h-[280px] flex items-center justify-center border border-dashed border-slate-200 dark:border-slate-700/60 rounded-xl px-8 text-center text-slate-400 dark:text-slate-500">
+            <div className="h-[280px] flex items-center justify-center border border-dashed border-slate-200 rounded-xl px-8 text-center text-slate-400">
               <div className="flex flex-col items-center gap-3">
                 <svg className="w-8 h-8 opacity-50" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M9 17v-2m3 2v-4m3 4v-6m2 10H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" /></svg>
                 <span className="text-sm font-medium tracking-wide">Awaiting image upload to calculate biomechanical mappings.</span>
@@ -316,7 +316,7 @@ export default function DashboardApp() {
           )}
           
           {error && !isLoading && (
-            <div className="h-64 flex items-center justify-center border border-red-200 dark:border-red-800/50 bg-red-50/80 dark:bg-red-900/10 rounded-xl px-8 text-center text-red-500">
+            <div className="h-64 flex items-center justify-center border border-red-200 bg-red-50/80 rounded-xl px-8 text-center text-red-500">
               <div className="flex flex-col items-center gap-2">
                 <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
@@ -329,11 +329,11 @@ export default function DashboardApp() {
           {isLoading && (
             <div className="flex flex-col gap-5 mt-2">
                {[1,2,3].map(i => (
-                 <div key={i} className="h-[110px] bg-slate-100 dark:bg-slate-800/60 animate-pulse rounded-xl border border-slate-200/50 dark:border-slate-700/50 relative overflow-hidden">
-                   <div className="absolute inset-0 -translate-x-full bg-gradient-to-r from-transparent via-white/40 dark:via-white/5 to-transparent animate-[shimmer_2s_infinite]"></div>
-                   <div className="mt-8 ml-6 w-24 h-4 bg-slate-300 dark:bg-slate-600 rounded-full"></div>
-                   <div className="mt-4 ml-6 w-40 h-8 bg-slate-300 dark:bg-slate-600 rounded-full"></div>
-                 </div>
+                 <div key={i} className="h-[110px] bg-slate-100 animate-pulse rounded-xl border border-slate-200/50 relative overflow-hidden">
+                   <div className="absolute inset-0 -translate-x-full bg-gradient-to-r from-transparent via-white/40 to-transparent animate-[shimmer_2s_infinite]"></div>
+                   <div className="mt-8 ml-6 w-24 h-4 bg-slate-300 rounded-full"></div>
+                   <div className="mt-4 ml-6 w-40 h-8 bg-slate-300 rounded-full"></div>
+                </div>
                ))}
             </div>
           )}
@@ -358,14 +358,14 @@ export default function DashboardApp() {
                 subtitle="mm" 
                 status={results.mandibular_status} 
               />
-              <div className="mt-2 p-5 bg-singapodent-primary/5 dark:bg-singapodent-primary/15 border border-singapodent-primary/15 dark:border-singapodent-primary/20 rounded-xl overflow-hidden shadow-sm">
-                 <h4 className="text-xs font-semibold uppercase text-singapodent-primary dark:text-singapodent-accent mb-3 tracking-wider flex items-center gap-2">
+              <div className="mt-2 p-5 bg-singapodent-primary/5 border border-singapodent-primary/15 rounded-xl overflow-hidden shadow-sm">
+                 <h4 className="text-xs font-semibold uppercase text-singapodent-primary mb-3 tracking-wider flex items-center gap-2">
                    <svg className="w-4 h-4 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
                    </svg>
                    Clinical Interpretation
                  </h4>
-                 <p className="text-sm text-slate-700 dark:text-slate-200 leading-relaxed font-normal">
+                 <p className="text-sm text-slate-700 leading-relaxed font-normal">
                    {results.interpretation}
                  </p>
               </div>

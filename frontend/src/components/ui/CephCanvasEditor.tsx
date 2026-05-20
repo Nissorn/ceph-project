@@ -130,7 +130,69 @@ export default function CephCanvasEditor({
   const [pointSize, setPointSize]         = useState(4);
   const [debugInfo, setDebugInfo]         = useState({ x: 0, y: 0, imageX: 0, imageY: 0 });
   const [isDebugMode, setIsDebugMode]     = useState(false);
-  const [isToolbarOpen, setIsToolbarOpen] = useState(true);
+  const [isToolbarOpen, setIsToolbarOpen]     = useState(true);
+
+  // ── TARGET 1: Undo/Redo state history ─────────────────────────────────────────
+  const [historyStack, setHistoryStack]       = useState<{ kps: Keypoint[]; polys: PolygonShape[] }[]>([]);
+  const [isFrozen, setIsFrozen]               = useState(false);
+
+  // Push current keypoint+polygon snapshot onto history
+  const pushHistory = useCallback(() => {
+    setHistoryStack(prev => {
+      const next = [...prev, { kps: [...keypoints], polys: [...polygons] }];
+      // cap at 20 entries to avoid unbounded memory growth
+      return next.length > 20 ? next.slice(next.length - 20) : next;
+    });
+  }, [keypoints, polygons]);
+
+  // Pop the last snapshot and restore
+  const undo = useCallback(() => {
+    if (historyStack.length === 0) return;
+    const prev = historyStack[historyStack.length - 1];
+    setHistoryStack(s => s.slice(0, -1));
+    setKeypoints(prev.kps);
+    setPolygons(prev.polys);
+    console.log('[CephEditor] Undo — restoring previous state.');
+  }, [historyStack]);
+
+  // ── TARGET 1: Confirm & Save — freeze + POST to API ──────────────────────────
+  const handleConfirmAndSave = useCallback(async () => {
+    if (isFrozen) return;
+    setIsFrozen(true);
+    console.log('[CephEditor] Confirm & Save — freezing manual modifications, marshaling coords…');
+
+    const baseUrl = (import.meta.env && (import.meta.env as any).VITE_API_URL) || 'http://localhost:8123';
+    const payload = {
+      image_name: imageFile.name,
+      keypoints: keypoints.map(kp => ({ name: kp.name, x: kp.x, y: kp.y })),
+      polygons: polygons.map(poly => ({ name: poly.name, points: poly.points })),
+    };
+
+    try {
+      const res = await fetch(`${baseUrl}/api/v1/analyze`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const data = await res.json();
+      console.log('[CephEditor] Confirm & Save — live recalculation complete:', data);
+    } catch (err) {
+      console.error('[CephEditor] Confirm & Save failed:', err);
+      // unfreeze on failure so user can retry
+      setIsFrozen(false);
+    }
+  }, [isFrozen, imageFile, keypoints, polygons]);
+
+  // Re-enable editing on canvas when unfrozen
+  useEffect(() => {
+    if (!isFrozen) return;
+    const el = containerRef.current;
+    if (!el) return;
+    const block = (e: WheelEvent) => e.preventDefault();
+    el.addEventListener('wheel', block, { passive: false });
+    return () => el.removeEventListener('wheel', block);
+  }, [isFrozen]);
 
   // ── Sync stale-proof ref with state ──────────────────────────────────────────
   useEffect(() => { scaleRef.current = stageScale; }, [stageScale]);
@@ -238,12 +300,16 @@ export default function CephCanvasEditor({
   // ── Shape event handlers ──────────────────────────────────────────────────────
 
   const moveKp = useCallback((id: string, e: KonvaEventObject<DragEvent>) => {
+    if (isFrozen) { e.target.stopDrag(); return; }
+    pushHistory();
     const [ix, iy] = toImage(e.target.x(), e.target.y());
     console.log(`[CephEditor] onDragEnd "${id}" → image x:${ix.toFixed(2)}, y:${iy.toFixed(2)}`);
     setKeypoints(prev => prev.map(k => k.id === id ? { ...k, x: ix, y: iy } : k));
-  }, [toImage]);
+  }, [isFrozen, pushHistory, toImage]);
 
   const moveVertex = useCallback((polyId: string, vi: number, e: KonvaEventObject<DragEvent>) => {
+    if (isFrozen) { e.target.stopDrag(); return; }
+    pushHistory();
     const [ix, iy] = toImage(e.target.x(), e.target.y());
     setPolygons(prev => prev.map(p => {
       if (p.id !== polyId) return p;
@@ -251,7 +317,7 @@ export default function CephCanvasEditor({
       pts[vi*2] = ix; pts[vi*2+1] = iy;
       return { ...p, points: pts };
     }));
-  }, [toImage]);
+  }, [isFrozen, pushHistory, toImage]);
 
   const deleteVertex = useCallback((polyId: string, vi: number, e: KonvaEventObject<MouseEvent>) => {
     e.cancelBubble = true;
@@ -737,6 +803,36 @@ export default function CephCanvasEditor({
                     </button>
                   </>
                 )}
+
+                <span className="text-white/20 select-none">|</span>
+
+                {/* TARGET 1: Undo — pops the history stack */}
+                <button
+                  onClick={undo}
+                  disabled={historyStack.length === 0}
+                  title="Undo last change"
+                  className={`flex items-center justify-center gap-1 px-2 py-0.5 rounded text-white/60 hover:text-white transition-colors whitespace-nowrap text-[11px] ${
+                    historyStack.length === 0 ? 'opacity-30 cursor-not-allowed' : 'hover:bg-white/10'
+                  }`}
+                >
+                  ↩ Undo
+                </button>
+
+                <span className="text-white/20 select-none">|</span>
+
+                {/* TARGET 1: Confirm & Save — high-contrast submit */}
+                <button
+                  onClick={handleConfirmAndSave}
+                  disabled={isFrozen}
+                  title="Confirm manual edits and trigger live recalculation"
+                  className={`flex items-center justify-center gap-1.5 px-3 py-1 rounded-full text-[11px] font-semibold transition-all whitespace-nowrap ${
+                    isFrozen
+                      ? 'bg-slate-600/50 text-slate-300 cursor-not-allowed'
+                      : 'bg-amber-400 hover:bg-amber-300 text-slate-900 hover:brightness-105 shadow-md'
+                  }`}
+                >
+                  {isFrozen ? '✓ Saved' : 'Confirm & Save'}
+                </button>
 
                 {/* Selected element name */}
                 {selectedName && (
