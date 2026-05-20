@@ -1,7 +1,7 @@
 # docker-compose.yml — Cephalometric Landmark Detection full-stack
 #
 # Architecture:
-#   api  (FastAPI)  — HRNet-W32 inference engine, port 8000
+#   api  (FastAPI)  — HRNet-W32 inference engine, port 8123 (on Mac host)
 #   web  (Astro)    — static SPA, port 4321
 #
 # Model weights (outputs/checkpoints/fold*.pth) are mounted as a volume
@@ -11,21 +11,20 @@ services:
   # ── FastAPI inference service ───────────────────────────────────────────────
   api:
     build:
-      context: ./backend
-      dockerfile: Dockerfile
+      context: .  # 🌟 แก้ไขจุดบิลด์ให้เป็น Root ของโปรเจกต์ เพื่อดึงโฟลเดอร์ src เข้าคอนเทนเนอร์ได้
+      dockerfile: backend/Dockerfile
     ports:
-      - "8000:8000"
+      - "8123:8000"  # 🌟 หนีพอร์ตชนบน Mac ยิงเข้าเครื่อง Mac ด้วย 8123 ทะลุเข้าตู้ด้วย 8000
     environment:
       # Override inference_service.py default path to match Docker volume mount.
-      # Must match the volume target below: /app/model-weights/checkpoints
       MODEL_CHECKPOINT_DIR: /app/model-weights/checkpoints
+      PYTHONPATH: /app  # 🌟 บังคับชี้ทิศทางให้โค้ดหาโมดูล 'src' เจอ 100%
     volumes:
       - ./outputs/checkpoints:/app/model-weights/checkpoints:ro
-    # Torch device detection is automatic: MPS → CUDA → CPU.
-    # No GPU/TPU configuration needed for standard deployments.
+      - ./src:/app/src  # 🌟 เมาท์โฟลเดอร์ src ล่าสุดของคุณเข้าไปในตู้
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/api/v1/health')"]
-      interval: 30s
+      interval: 15s  # ปรับให้ตรวจจับไวขึ้น
       timeout: 10s
       start_period: 40s
       retries: 3
@@ -37,15 +36,14 @@ services:
       context: ./frontend
       dockerfile: Dockerfile
       args:
-        VITE_API_URL: http://localhost:8000
+        # 🌟 บังคับเบราว์เซอร์บน Mac ให้ส่งรูปพุ่งตรงเข้าพอร์ตหลังบ้านที่เราเปิดหลบไว้ (8123)
+        VITE_API_URL: http://localhost:8123/api/v1
     ports:
       - "4321:4321"
     depends_on:
       api:
         condition: service_healthy
     environment:
-      # VITE_API_URL is baked into the JS bundle at Astro build time.
-      # Change VITE_API_URL arg above for different backend host in production.
       NODE_ENV: production
     healthcheck:
       test: ["CMD", "wget", "-qO-", "http://localhost:4321/"]

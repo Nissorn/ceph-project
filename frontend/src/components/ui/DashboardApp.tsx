@@ -15,10 +15,15 @@ export default function DashboardApp() {
     Record<string, Record<string, { x: number; y: number; confidence: number }>>
   >({});
 
+  // Tracks whether the user has actually clicked "Run AI Analysis"
+  // Required to gate editor visibility — prevents JSON mock from auto-displaying on upload
+  const [analyzeTriggered, setAnalyzeTriggered] = useState(false);
+
   const hasPredictions = Object.keys(aiPredictions).length > 0;
 
-  // Canvas shows when: backend analysis returned results  OR  a file is loaded (AI JSON lookup will happen inside CephCanvasEditor)
-  const editorVisible = !!(results || (file && hasPredictions));
+  // Canvas shows only after live API returns results OR after analyze button is clicked
+  // (analyze button click triggers JSON lookup for mock-on-click; plain upload shows preview only)
+  const editorVisible = !!(results || (analyzeTriggered && file && hasPredictions));
 
   useEffect(() => {
     console.log("[Debug] Fetching AI predictions JSON...");
@@ -52,18 +57,21 @@ export default function DashboardApp() {
     setFile(selectedFile);
     setResults(null);
     setError(null);
+    setAnalyzeTriggered(false);
   }, []);
 
   const handleReset = useCallback(() => {
     setFile(null);
     setResults(null);
     setError(null);
+    setAnalyzeTriggered(false);
   }, []);
 
   const handleAnalyze = useCallback(async () => {
     if (!file) return;
     setIsLoading(true);
     setError(null);
+    setAnalyzeTriggered(true); // unlock editor + JSON lookup — only on actual button click
      
     // Deterministic network timeout protection via AbortController
     const controller = new AbortController();
@@ -74,7 +82,8 @@ export default function DashboardApp() {
       formData.append('file', file);
        
       // Resilient base URL derivation supporting distinct environments
-      const baseUrl = (import.meta.env && import.meta.env.VITE_API_URL) || 'http://localhost:8000';
+      // Docker Compose backend on port 8123; VITE_API_URL overrides for container networking
+      const baseUrl = (import.meta.env && import.meta.env.VITE_API_URL) || 'http://localhost:8123';
       const response = await fetch(`${baseUrl}/api/v1/analyze`, {
         method: 'POST',
         body: formData,

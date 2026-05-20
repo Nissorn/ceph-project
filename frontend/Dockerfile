@@ -18,8 +18,8 @@ FROM node:22-alpine
 WORKDIR /app
 
 # security: non-root
-RUN addgroup -g 1000 -S appgroup && \
-    adduser  -u 1000 -S appuser -G appgroup
+RUN addgroup -g 1001 -S appgroup && \
+    adduser  -u 1001 -S appuser -G appgroup
 
 # Install serve or nginx-like static server
 # Using npm serve as a lightweight option; replace with nginx for CDN-style if needed
