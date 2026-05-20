@@ -532,6 +532,182 @@ class BoneThicknessCalculator:
         return min_thickness
 
 
+
+# --------------------------------------------------------------------------
+# Pipeline C — Minimum Distance with Crest Offset (contour-based)
+# Idea C: Minimum Distance with Crest Offset
+# --------------------------------------------------------------------------
+
+def calculate_min_bone_thickness(
+    tooth_contour: np.ndarray,
+    bone_contour: np.ndarray,
+    crest_landmark: Tuple[float, float],
+    offset_mm: float = 1.5,
+    mm_per_pixel: float = 0.0984,
+) -> Dict[str, any]:
+    """Calculate minimum bone thickness using contour-to-contour distance.
+
+    This is the core algorithm for "Idea C: Minimum Distance with Crest Offset".
+    It bypasses the thin alveolar crest by starting from an offset position
+    above the crest landmark, then finds the closest point on the bone contour
+    to each tooth root point.
+
+    Parameters
+    ----------
+    tooth_contour : np.ndarray
+        Shape (N, 2) — (x, y) pixel coordinates of tooth root boundary points.
+        Points are ordered from cervical (crest level) toward the apex.
+    bone_contour : np.ndarray
+        Shape (M, 2) — (x, y) pixel coordinates of the bone boundary
+        (either Labial or Palatal cortical bone).
+    crest_landmark : tuple (x, y)
+        Pixel coordinates of the Labial_crest or Palatal_crest landmark.
+        Used as the vertical anchor for the crest-offset exclusion zone.
+    offset_mm : float
+        Vertical offset upward from the crest landmark to begin searching.
+        Default 1.5 mm. Typical clinical range: 1–2 mm.
+        The crest itself is excluded because the alveolar edge is normally
+        the thinnest part and does not represent the functional bone thickness.
+    mm_per_pixel : float
+        Calibration factor (mm per pixel). Default 0.0984 mm/px (dataset mean).
+
+    Returns
+    -------
+    dict with keys:
+        min_distance_px  — raw minimum Euclidean distance in pixels
+        min_distance_mm  — minimum distance converted to mm
+        closest_tooth   — (x, y) pixel coords of the tooth point nearest bone
+        closest_bone    — (x, y) pixel coords of the bone point nearest tooth
+        num_tooth_points — number of tooth contour points considered
+        num_bone_points  — number of bone contour points considered
+        crest_offset_mm  — the offset value used (for audit trail)
+    """
+    if len(tooth_contour) == 0 or len(bone_contour) == 0:
+        return {
+            "min_distance_px": 0.0,
+            "min_distance_mm": 0.0,
+            "closest_tooth": (0.0, 0.0),
+            "closest_bone": (0.0, 0.0),
+            "num_tooth_points": 0,
+            "num_bone_points": 0,
+            "crest_offset_mm": offset_mm,
+        }
+
+    crest_x, crest_y = crest_landmark
+    offset_px = offset_mm / mm_per_pixel
+
+    # Filter: only consider tooth points that are strictly below the crest
+    # (higher y = more cervical = away from apex). This is the Crest Offset
+    # Protection Feature — we skip the very thin crest edge.
+    mask = tooth_contour[:, 1] > (crest_y + offset_px)
+    filtered_tooth = tooth_contour[mask]
+
+    if len(filtered_tooth) == 0:
+        # No points below crest offset — fall back to all points
+        filtered_tooth = tooth_contour
+
+    # Compute pairwise Euclidean distances between filtered tooth points
+    # and bone contour points.
+    diff = filtered_tooth[:, np.newaxis, :] - bone_contour[np.newaxis, :, :]
+    dist_matrix = np.sqrt(np.sum(diff ** 2, axis=2))
+
+    # Find the global minimum
+    min_idx = np.argmin(dist_matrix)
+    min_dist_px = float(dist_matrix.flatten()[min_idx])
+    min_dist_mm = min_dist_px * mm_per_pixel
+
+    # Decode flat index back to (tooth_index, bone_index)
+    n_bone = bone_contour.shape[0]
+    tooth_idx = min_idx // n_bone
+    bone_idx = min_idx % n_bone
+
+    closest_tooth = tuple(filtered_tooth[tooth_idx].tolist())
+    closest_bone = tuple(bone_contour[bone_idx].tolist())
+
+    return {
+        "min_distance_px": min_dist_px,
+        "min_distance_mm": min_dist_mm,
+        "closest_tooth": closest_tooth,
+        "closest_bone": closest_bone,
+        "num_tooth_points": len(filtered_tooth),
+        "num_bone_points": len(bone_contour),
+        "crest_offset_mm": offset_mm,
+    }
+
+
+def classify_bone_thickness_tier(
+    lb_min_dist_mm: float,
+    pb_min_dist_mm: float,
+) -> Dict[str, any]:
+    """Classify bone thickness into the 4-tier clinical scheme.
+
+    Classification rules (pending confirmation from Dr.):
+        Thick Bone           : LB >= 0.5 mm AND PB >= 0.5 mm
+        Relatively Thick     : (LB < 0.5 mm AND PB >= 0.5 mm)
+                               OR (LB >= 0.5 mm AND PB < 0.5 mm)
+        Thin Type            : LB < 0.5 mm AND PB < 0.5 mm
+        Vulnerably Thin      : LB <= 0.2 mm OR PB <= 0.2 mm
+
+    Priority: Vulnerably Thin overrides all other categories.
+    That is, if either side is <= 0.2 mm, the patient is classified as
+    Vulnerably Thin regardless of the other side.
+
+    Parameters
+    ----------
+    lb_min_dist_mm : float
+        Minimum distance from tooth root to Labial bone contour (mm).
+    pb_min_dist_mm : float
+        Minimum distance from tooth root to Palatal bone contour (mm).
+
+    Returns
+    -------
+    dict with keys:
+        tier                 — "Thick Bone" | "Relatively Thick" |
+                               "Thin Type" | "Vulnerably Thin"
+        lb_mm                — labial minimum distance (echoed back)
+        pb_mm                — palatal minimum distance (echoed back)
+        is_vulnerable        — bool, True if either side <= 0.2 mm
+        classification_note  — human-readable one-line summary
+    """
+    if lb_min_dist_mm <= 0.2 or pb_min_dist_mm <= 0.2:
+        tier = "Vulnerably Thin"
+        classification_note = (
+            f"Vulnerable: LB={lb_min_dist_mm:.3f}mm, PB={pb_min_dist_mm:.3f}mm "
+            "(at least one side <= 0.2 mm)"
+        )
+        is_vulnerable = True
+    elif lb_min_dist_mm < 0.5 and pb_min_dist_mm < 0.5:
+        tier = "Thin Type"
+        classification_note = (
+            f"Thin bone: LB={lb_min_dist_mm:.3f}mm, PB={pb_min_dist_mm:.3f}mm "
+            "(both sides < 0.5 mm)"
+        )
+        is_vulnerable = False
+    elif (lb_min_dist_mm < 0.5) != (pb_min_dist_mm < 0.5):
+        tier = "Relatively Thick"
+        classification_note = (
+            f"Relatively thick: LB={lb_min_dist_mm:.3f}mm, PB={pb_min_dist_mm:.3f}mm "
+            "(one side < 0.5 mm)"
+        )
+        is_vulnerable = False
+    else:
+        tier = "Thick Bone"
+        classification_note = (
+            f"Thick bone: LB={lb_min_dist_mm:.3f}mm, PB={pb_min_dist_mm:.3f}mm "
+            "(both sides >= 0.5 mm)"
+        )
+        is_vulnerable = False
+
+    return {
+        "tier": tier,
+        "lb_mm": lb_min_dist_mm,
+        "pb_mm": pb_min_dist_mm,
+        "is_vulnerable": is_vulnerable,
+        "classification_note": classification_note,
+    }
+
+
+
 # ---------------------------------------------------------------------------
 # Built-in tests
 # ---------------------------------------------------------------------------
@@ -661,4 +837,93 @@ if __name__ == "__main__":
 
     print("\n    Bone Thickness calculations PASSED ✓")
     print("=" * 70)
+
+    # ── Step 7: Pipeline C — Minimum Distance with Crest Offset ─────────────
+    print("\n[7] Pipeline C — Minimum Distance with Crest Offset smoke test …")
+
+    # Mock data: tooth root contour (N points from crest to apex)
+    # Simple vertical tooth with slight taper, pixel coordinates
+    tooth_contour = np.array([
+        (255, 392), (254, 400), (253, 408), (252, 416),
+        (252, 424), (251, 432), (250, 440), (249, 448),
+    ], dtype=float)
+
+    # Labial bone contour — flat vertical surface ~8 px to the left
+    labial_bone_contour = np.array([
+        (200, 380), (201, 390), (200, 400), (201, 410),
+        (200, 420), (201, 430), (200, 440), (201, 450),
+    ], dtype=float)
+
+    # Palatal bone contour — flat vertical surface ~15 px to the right
+    palatal_bone_contour = np.array([
+        (310, 375), (311, 385), (310, 395), (311, 405),
+        (310, 415), (311, 425), (310, 435), (311, 445),
+    ], dtype=float)
+
+    # Labial crest landmark (from mock_landmarks)
+    labial_crest = (316.0, 395.0)
+    palatal_crest = (278.0, 390.0)
+
+    MM_PER_PX = 0.0984
+
+    # ── 7a: Compute LB minimum distance ───────────────────────────────────
+    lb_result = calculate_min_bone_thickness(
+        tooth_contour=tooth_contour,
+        bone_contour=labial_bone_contour,
+        crest_landmark=labial_crest,
+        offset_mm=1.5,
+        mm_per_pixel=MM_PER_PX,
+    )
+    print(f"\n    Labial bone min distance: {lb_result['min_distance_mm']:.3f} mm "
+          f"({lb_result['num_tooth_points']} tooth pts, {lb_result['num_bone_points']} bone pts)")
+
+    # ── 7b: Compute PB minimum distance ───────────────────────────────────
+    pb_result = calculate_min_bone_thickness(
+        tooth_contour=tooth_contour,
+        bone_contour=palatal_bone_contour,
+        crest_landmark=palatal_crest,
+        offset_mm=1.5,
+        mm_per_pixel=MM_PER_PX,
+    )
+    print(f"    Palatal bone min distance: {pb_result['min_distance_mm']:.3f} mm "
+          f"({pb_result['num_tooth_points']} tooth pts, {pb_result['num_bone_points']} bone pts)")
+
+    # ── 7c: Classify tier ──────────────────────────────────────────────────
+    tier_result = classify_bone_thickness_tier(
+        lb_min_dist_mm=lb_result['min_distance_mm'],
+        pb_min_dist_mm=pb_result['min_distance_mm'],
+    )
+    print(f"\n    Classification tier: {tier_result['tier']}")
+    print(f"    → {tier_result['classification_note']}")
+
+    # ── 7d: Assertions ────────────────────────────────────────────────────
+    assert tier_result['tier'] in {
+        "Thick Bone", "Relatively Thick", "Thin Type", "Vulnerably Thin",
+    }, f"Invalid tier: {tier_result['tier']}"
+    assert lb_result['min_distance_mm'] > 0.0, "LB distance must be > 0"
+    assert pb_result['min_distance_mm'] > 0.0, "PB distance must be > 0"
+    assert isinstance(tier_result['is_vulnerable'], bool), "is_vulnerable must be bool"
+    assert 'closest_tooth' in lb_result and 'closest_bone' in lb_result
+
+    # ── 7e: Tier coverage — test all 4 tiers with synthetic data ───────────
+    print("\n    Running 4-tier coverage checks …")
+    test_cases = [
+        # (lb_mm, pb_mm, expected_tier)
+        (0.8,  0.9,  "Thick Bone"),
+        (0.3,  0.9,  "Relatively Thick"),
+        (0.8,  0.3,  "Relatively Thick"),
+        (0.4,  0.4,  "Thin Type"),
+        (0.15, 0.6,  "Vulnerably Thin"),
+        (0.6,  0.15, "Vulnerably Thin"),
+    ]
+    for lb_mm, pb_mm, expected in test_cases:
+        r = classify_bone_thickness_tier(lb_mm, pb_mm)
+        assert r['tier'] == expected, (
+            f"Tier mismatch: LB={lb_mm}, PB={pb_mm} → expected '{expected}', got '{r['tier']}'"
+        )
+        print(f"      LB={lb_mm:.2f}mm, PB={pb_mm:.2f}mm → {r['tier']} ✓")
+
+    print("\n    Pipeline C smoke test PASSED ✓")
+    print("=" * 70)
+
 
