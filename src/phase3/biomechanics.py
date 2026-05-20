@@ -1,20 +1,20 @@
 """
-Phase 3 — Medical Logic Engine (Biomechanics)
+Phase 3 -- Medical Logic Engine (Biomechanics)
 ==============================================
 Implements U1-PP angle calculation and treatment-biomechanics classification
 based on Zhang et al. 2021 for upper central incisor root position planning.
 
 Landmark keys (10 total, hardcoded per GEMINI.md):
-    'Upper_tip'       — incisal tip of upper central incisor
-    'Upper_apex'      — root apex of upper central incisor
-    'ANS'             — Anterior Nasal Spine
-    'PNS'             — Posterior Nasal Spine
-    'LB'              — Labial bone landmark
-    'PB'              — Palatal bone landmark
-    'Labial_crest'    — Labial alveolar crest
-    'Palatal_crest'   — Palatal alveolar crest
-    'Labial_midroot' — Labial midroot
-    'Palatal_midroot'— Palatal midroot
+    'Upper_tip'       -- incisal tip of upper central incisor
+    'Upper_apex'      -- root apex of upper central incisor
+    'ANS'             -- Anterior Nasal Spine
+    'PNS'             -- Posterior Nasal Spine
+    'LB'              -- Labial bone landmark
+    'PB'              -- Palatal bone landmark
+    'Labial_crest'    -- Labial alveolar crest
+    'Palatal_crest'   -- Palatal alveolar crest
+    'Labial_midroot' -- Labial midroot
+    'Palatal_midroot'-- Palatal midroot
 
 Usage:
     python src/phase3/biomechanics.py
@@ -42,7 +42,7 @@ LANDMARK_KEYS = [
     "Palatal_midroot",
 ]
 
-# Zhang et al. 2021 — angle zone boundaries (degrees)
+# Zhang et al. 2021 -- angle zone boundaries (degrees)
 ANGLE_LOW = 105.0
 ANGLE_HIGH = 115.0
 
@@ -65,7 +65,7 @@ REQUIRED_CLASSIFICATION_KEYS = [
 ]
 
 # ---------------------------------------------------------------------------
-# Classification lookup table — Zhang et al. 2021
+# Classification lookup table -- Zhang et al. 2021
 # Rows: root apex position (Labial / Midway / Palatal)
 # Cols: U1-PP angle zone  (<105 / 105-115 / >115)
 # ---------------------------------------------------------------------------
@@ -151,18 +151,18 @@ def mock_landmarks() -> Dict[str, Tuple[float, float]]:
     dict mapping each of the 10 landmark keys to an (x, y) tuple.
     """
     return {
-        # Upper incisor — tip is lower (higher y) and more labial (lower x)
+        # Upper incisor -- tip is lower (higher y) and more labial (lower x)
         # than apex; tooth angles ~ 110° relative to palatal plane
         "Upper_tip":        (310.0, 480.0),
         "Upper_apex":       (295.0, 340.0),
-        # Palatal plane — ANS is anterior (left), PNS is posterior (right)
+        # Palatal plane -- ANS is anterior (left), PNS is posterior (right)
         "ANS":              (250.0, 410.0),
         "PNS":              (520.0, 415.0),
         # LB and PB flank the root apex (apex at ~295, 340)
         # LB is slightly labial to the apex → small positive Δx
         "LB":               (302.0, 340.0),   # 7 px labial to apex
         "PB":               (280.0, 340.0),   # 15 px palatal to apex
-        # Crests and mid-root — adjacent to the upper incisor socket
+        # Crests and mid-root -- adjacent to the upper incisor socket
         "Labial_crest":     (316.0, 395.0),
         "Palatal_crest":    (278.0, 390.0),
         "Labial_midroot":  (308.0, 415.0),
@@ -212,9 +212,9 @@ def calculate_metrics(
     Returns
     -------
     dict with keys:
-        u1_pp_angle_deg  — U1-to-palatal-plane angle in degrees
-        lb_apex_dist_mm  — distance from LB to root apex in mm
-        pb_apex_dist_mm  — distance from PB to root apex in mm
+        u1_pp_angle_deg  -- U1-to-palatal-plane angle in degrees
+        lb_apex_dist_mm  -- distance from LB to root apex in mm
+        pb_apex_dist_mm  -- distance from PB to root apex in mm
     """
     _required = ("Upper_tip", "Upper_apex", "ANS", "PNS", "LB", "PB")
     missing = [k for k in _required if k not in landmarks]
@@ -311,11 +311,11 @@ def classify_treatment(
     Returns
     -------
     dict with exactly these keys:
-        "Root apex position"      — "Labial" | "Midway" | "Palatal"
-        "Incisor condition"       — descriptive string
-        "Preferred biomechanics"  — recommended biomechanical approach
-        "Biomechanics to avoid"   — contraindicated movements
-        "Clinical implication"    — clinical narrative
+        "Root apex position"      -- "Labial" | "Midway" | "Palatal"
+        "Incisor condition"       -- descriptive string
+        "Preferred biomechanics"  -- recommended biomechanical approach
+        "Biomechanics to avoid"   -- contraindicated movements
+        "Clinical implication"    -- clinical narrative
     """
     apex_position = _get_apex_position(lb_apex_dist, pb_apex_dist)
     angle_zone    = _get_angle_zone(u1_pp_angle)
@@ -534,7 +534,7 @@ class BoneThicknessCalculator:
 
 
 # --------------------------------------------------------------------------
-# Pipeline C — Minimum Distance with Crest Offset (contour-based)
+# Pipeline C -- Minimum Distance with Crest Offset (contour-based)
 # Idea C: Minimum Distance with Crest Offset
 # --------------------------------------------------------------------------
 
@@ -555,10 +555,10 @@ def calculate_min_bone_thickness(
     Parameters
     ----------
     tooth_contour : np.ndarray
-        Shape (N, 2) — (x, y) pixel coordinates of tooth root boundary points.
+        Shape (N, 2) -- (x, y) pixel coordinates of tooth root boundary points.
         Points are ordered from cervical (crest level) toward the apex.
     bone_contour : np.ndarray
-        Shape (M, 2) — (x, y) pixel coordinates of the bone boundary
+        Shape (M, 2) -- (x, y) pixel coordinates of the bone boundary
         (either Labial or Palatal cortical bone).
     crest_landmark : tuple (x, y)
         Pixel coordinates of the Labial_crest or Palatal_crest landmark.
@@ -574,13 +574,13 @@ def calculate_min_bone_thickness(
     Returns
     -------
     dict with keys:
-        min_distance_px  — raw minimum Euclidean distance in pixels
-        min_distance_mm  — minimum distance converted to mm
-        closest_tooth   — (x, y) pixel coords of the tooth point nearest bone
-        closest_bone    — (x, y) pixel coords of the bone point nearest tooth
-        num_tooth_points — number of tooth contour points considered
-        num_bone_points  — number of bone contour points considered
-        crest_offset_mm  — the offset value used (for audit trail)
+        min_distance_px  -- raw minimum Euclidean distance in pixels
+        min_distance_mm  -- minimum distance converted to mm
+        closest_tooth   -- (x, y) pixel coords of the tooth point nearest bone
+        closest_bone    -- (x, y) pixel coords of the bone point nearest tooth
+        num_tooth_points -- number of tooth contour points considered
+        num_bone_points  -- number of bone contour points considered
+        crest_offset_mm  -- the offset value used (for audit trail)
     """
     if len(tooth_contour) == 0 or len(bone_contour) == 0:
         return {
@@ -598,12 +598,12 @@ def calculate_min_bone_thickness(
 
     # Filter: only consider tooth points that are strictly below the crest
     # (higher y = more cervical = away from apex). This is the Crest Offset
-    # Protection Feature — we skip the very thin crest edge.
+    # Protection Feature -- we skip the very thin crest edge.
     mask = tooth_contour[:, 1] > (crest_y + offset_px)
     filtered_tooth = tooth_contour[mask]
 
     if len(filtered_tooth) == 0:
-        # No points below crest offset — fall back to all points
+        # No points below crest offset -- fall back to all points
         filtered_tooth = tooth_contour
 
     # Compute pairwise Euclidean distances between filtered tooth points
@@ -662,12 +662,12 @@ def classify_bone_thickness_tier(
     Returns
     -------
     dict with keys:
-        tier                 — "Thick Bone" | "Relatively Thick" |
+        tier                 -- "Thick Bone" | "Relatively Thick" |
                                "Thin Type" | "Vulnerably Thin"
-        lb_mm                — labial minimum distance (echoed back)
-        pb_mm                — palatal minimum distance (echoed back)
-        is_vulnerable        — bool, True if either side <= 0.2 mm
-        classification_note  — human-readable one-line summary
+        lb_mm                -- labial minimum distance (echoed back)
+        pb_mm                -- palatal minimum distance (echoed back)
+        is_vulnerable        -- bool, True if either side <= 0.2 mm
+        classification_note  -- human-readable one-line summary
     """
     if lb_min_dist_mm <= 0.2 or pb_min_dist_mm <= 0.2:
         tier = "Vulnerably Thin"
@@ -709,9 +709,8 @@ def classify_bone_thickness_tier(
 
 
 # --------------------------------------------------------------------------
-# Plan B — 3-Level Root Line Distances (for UI visualization)
+# Plan B -- 3-Level Root Line Distances (for UI visualization)
 # --------------------------------------------------------------------------
-
 def compute_bone_thickness_3_levels(
     tooth_contour: np.ndarray,
     labial_bone_contour: np.ndarray,
@@ -719,43 +718,15 @@ def compute_bone_thickness_3_levels(
     u1_axis_vector: Tuple[Tuple[float, float], Tuple[float, float]],
     mm_per_pixel: float = 0.0984,
 ) -> Dict[str, Dict[str, float]]:
-    """Compute Labial and Palatal bone thickness at cervical / middle / apical levels.
-
-    This is Plan B — designed to supply the 3 horizontal measurement lines
-    requested by the Doctor for frontend visualization and reporting.
-
-    The U1 long axis (Upper_tip → Upper_apex) is divided into thirds:
-        - Cervical: 1/3 down from tip
-        - Middle:   2/3 down from tip (midroot)
-        - Apical:   at the root apex
-
-    At each level a perpendicular projection is cast through the tooth contour
-    and the bone contours are searched for the intersection width (the bone
-    thickness at that height).
-
-    Parameters
-    ----------
-    tooth_contour : np.ndarray
-        Shape (N, 2) — (x, y) pixel coordinates of tooth root boundary points.
-    labial_bone_contour : np.ndarray
-        Shape (M, 2) — (x, y) pixel coords of the Labial cortical bone boundary.
-    palatal_bone_contour : np.ndarray
-        Shape (K, 2) — (x, y) pixel coords of the Palatal cortical bone boundary.
-    u1_axis_vector : tuple
-        ((tip_x, tip_y), (apex_x, apex_y)) defining the long axis of U1.
-    mm_per_pixel : float
-        Calibration factor (mm per pixel). Default 0.0984 mm/px.
+    """Compute bone thickness at three U1-axis levels (cervical / middle / apical).
 
     Returns
     -------
-    dict with key per level:
-        {
-          "cervical": {"lb_mm": float, "pb_mm": float},
-          "middle":   {"lb_mm": float, "pb_mm": float},
-          "apical":   {"lb_mm": float, "pb_mm": float},
-        }
-    Each value is the perpendicular bone thickness at that root level.
-    Returns 0.0 mm for any side with zero bone contour points.
+    dict keyed by level name ("cervical", "middle", "apical"), each containing:
+        cx, cy  - centre-point coordinates on the U1 axis where the
+                  perpendicular was cast (image pixel space).
+        lb_mm   -- labial  bone thickness (px-extent × mm_per_pixel)
+        pb_mm   -- palatal bone thickness (px-extent × mm_per_pixel)
     """
     tip_xy = np.array(u1_axis_vector[0], dtype=float)
     apex_xy = np.array(u1_axis_vector[1], dtype=float)
@@ -763,7 +734,10 @@ def compute_bone_thickness_3_levels(
     u1_vec = apex_xy - tip_xy
     u1_len = float(np.linalg.norm(u1_vec))
     if u1_len == 0.0:
-        return {level: {"lb_mm": 0.0, "pb_mm": 0.0} for level in ("cervical", "middle", "apical")}
+        return {
+            level: {"cx": 0.0, "cy": 0.0, "lb_mm": 0.0, "pb_mm": 0.0}
+            for level in ("cervical", "middle", "apical")
+        }
 
     u1_unit = u1_vec / u1_len
     u1_perp = np.array([-u1_unit[1], u1_unit[0]], dtype=float)   # 90° clockwise
@@ -779,12 +753,30 @@ def compute_bone_thickness_3_levels(
         ("apical",   tip_xy + u1_unit * t_apical),
     ]
 
+    def _side_thickness_with_proj(
+        bone_pts: np.ndarray, center_pt: np.ndarray, perp: np.ndarray
+    ) -> Tuple[float, float]:
+        """Return (width_mm, max_half_extent_px) for a bone side."""
+        if len(bone_pts) == 0:
+            return 0.0, 0.0
+        vectors = bone_pts - center_pt
+        projections = vectors @ perp
+        width_px = float(np.max(projections) - np.min(projections))
+        half_extent_px = float(np.max(np.abs(projections)))
+        return width_px * mm_per_pixel, half_extent_px
+
     results = {}
     for level_name, center_pt in levels:
-        lb_mm, pb_mm = _perpendicular_bone_thickness(
-            center_pt, u1_perp, labial_bone_contour, palatal_bone_contour, mm_per_pixel
-        )
-        results[level_name] = {"lb_mm": lb_mm, "pb_mm": pb_mm}
+        lb_mm, lb_half = _side_thickness_with_proj(
+            labial_bone_contour, center_pt, u1_perp)
+        pb_mm, pb_half = _side_thickness_with_proj(
+            palatal_bone_contour, center_pt, u1_perp)
+        results[level_name] = {
+            "cx":    float(center_pt[0]),
+            "cy":    float(center_pt[1]),
+            "lb_mm": lb_mm,
+            "pb_mm": pb_mm,
+        }
 
     return results
 
@@ -833,11 +825,11 @@ def compute_bone_thickness_full(
     Parameters
     ----------
     tooth_contour : np.ndarray
-        Shape (N, 2) — tooth root boundary pixel coordinates.
+        Shape (N, 2) -- tooth root boundary pixel coordinates.
     labial_bone_contour : np.ndarray
-        Shape (M, 2) — Labial cortical bone boundary pixel coordinates.
+        Shape (M, 2) -- Labial cortical bone boundary pixel coordinates.
     palatal_bone_contour : np.ndarray
-        Shape (K, 2) — Palatal cortical bone boundary pixel coordinates.
+        Shape (K, 2) -- Palatal cortical bone boundary pixel coordinates.
     u1_axis_vector : tuple
         ((tip_x, tip_y), (apex_x, apex_y)) defining the U1 long axis.
     labial_crest : tuple (x, y)
@@ -854,14 +846,14 @@ def compute_bone_thickness_full(
     -------
     dict with two top-level keys:
 
-    `lines_3_level` — Plan B output, for UI rendering:
+    `lines_3_level` -- Plan B output, for UI rendering:
         {
           "cervical": {"lb_mm": float, "pb_mm": float},
           "middle":   {"lb_mm": float, "pb_mm": float},
           "apical":   {"lb_mm": float, "pb_mm": float},
         }
 
-    `classification` — Plan C output, for clinical tier classification:
+    `classification` -- Plan C output, for clinical tier classification:
         {
           "labial_min_mm":  float,
           "palatal_min_mm": float,
@@ -871,8 +863,8 @@ def compute_bone_thickness_full(
         }
 
     Also carries audit fields:
-        crest_offset_mm — the offset value used
-        mm_per_pixel    — calibration factor used
+        crest_offset_mm -- the offset value used
+        mm_per_pixel    -- calibration factor used
     """
     # Plan B: 3-level lines for UI visualization
     lines_3_level = compute_bone_thickness_3_levels(
@@ -926,7 +918,7 @@ def compute_bone_thickness_full(
 
 if __name__ == "__main__":
     print("=" * 70)
-    print("  Phase 3 — Biomechanics Engine  |  Built-in Self-Test")
+    print("  Phase 3 -- Biomechanics Engine  |  Built-in Self-Test")
     print("=" * 70)
 
     # ── Step 1: Generate mock landmarks ──────────────────────────────────────
@@ -1020,7 +1012,7 @@ if __name__ == "__main__":
               f"→ {r['Preferred biomechanics'][:40]}…  ✓")
 
     print("\n" + "=" * 70)
-    print("  All tests passed — biomechanics.py is working correctly.")
+    print("  All tests passed -- biomechanics.py is working correctly.")
     print("=" * 70)
 
     # ── Step 6: Test Bone Thickness Calculator ────────────────────────────────
@@ -1050,8 +1042,8 @@ if __name__ == "__main__":
     print("\n    Bone Thickness calculations PASSED ✓")
     print("=" * 70)
 
-    # ── Step 7: Pipeline C — Minimum Distance with Crest Offset ─────────────
-    print("\n[7] Pipeline C — Minimum Distance with Crest Offset smoke test …")
+    # ── Step 7: Pipeline C -- Minimum Distance with Crest Offset ─────────────
+    print("\n[7] Pipeline C -- Minimum Distance with Crest Offset smoke test …")
 
     # Mock data: tooth root contour (N points from crest to apex)
     # Simple vertical tooth with slight taper, pixel coordinates
@@ -1060,13 +1052,13 @@ if __name__ == "__main__":
         (252, 424), (251, 432), (250, 440), (249, 448),
     ], dtype=float)
 
-    # Labial bone contour — flat vertical surface ~8 px to the left
+    # Labial bone contour -- flat vertical surface ~8 px to the left
     labial_bone_contour = np.array([
         (200, 380), (201, 390), (200, 400), (201, 410),
         (200, 420), (201, 430), (200, 440), (201, 450),
     ], dtype=float)
 
-    # Palatal bone contour — flat vertical surface ~15 px to the right
+    # Palatal bone contour -- flat vertical surface ~15 px to the right
     palatal_bone_contour = np.array([
         (310, 375), (311, 385), (310, 395), (311, 405),
         (310, 415), (311, 425), (310, 435), (311, 445),
@@ -1117,7 +1109,7 @@ if __name__ == "__main__":
     assert isinstance(tier_result['is_vulnerable'], bool), "is_vulnerable must be bool"
     assert 'closest_tooth' in lb_result and 'closest_bone' in lb_result
 
-    # ── 7e: Tier coverage — test all 4 tiers with synthetic data ───────────
+    # ── 7e: Tier coverage -- test all 4 tiers with synthetic data ───────────
     print("\n    Running 4-tier coverage checks …")
     test_cases = [
         # (lb_mm, pb_mm, expected_tier)
@@ -1152,12 +1144,12 @@ if __name__ == "__main__":
         mm_per_pixel=MM_PER_PX,
     )
 
-    print("\n    Plan B — 3-Level Lines (for UI):")
+    print("\n    Plan B -- 3-Level Lines (for UI):")
     for level, vals in combined["lines_3_level"].items():
         print(f"      {level:<10}: LB={vals['lb_mm']:.3f}mm  PB={vals['pb_mm']:.3f}mm")
 
     cls = combined["classification"]
-    print(f"\n    Plan C — Classification (for clinical tier):")
+    print(f"\n    Plan C -- Classification (for clinical tier):")
     print(f"      Labial min  : {cls['labial_min_mm']:.3f} mm")
     print(f"      Palatal min : {cls['palatal_min_mm']:.3f} mm")
     print(f"      Tier        : {cls['tier']}")

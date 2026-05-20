@@ -228,9 +228,10 @@ export default function DashboardApp() {
                 <div className="absolute inset-0 z-10">
                   <CephCanvasEditor
                     imageFile={file}
-                    boneThickness={results?.lines_3_level ?? undefined}
+                    boneThickness={results?.bone_thickness?.lines_3_level ?? undefined}
                     initialKeypoints={(() => {
                       console.log("[Debug] Uploaded file name:", file.name);
+                      console.log("[Debug] bone_thickness.lines_3_level from API:", results?.bone_thickness?.lines_3_level);
                       const preds = aiPredictions[file.name];
                       if (!preds) {
                           console.log("[Debug] ❌ Could not find this file name in the JSON keys!");
