@@ -21,10 +21,15 @@ export interface PolygonShape {
 }
 
 // ── Plan B 3-level bone thickness lines from backend ─────────────────────────
+export interface BoneLevelPoint {
+  x: number;   // image-space x
+  y: number;   // image-space y
+  mm: number;  // thickness in mm
+}
 export interface Lines3Level {
-  cervical: { lb_x: number; lb_y: number; pb_x: number; pb_y: number; lb_mm: number; pb_mm: number; total_mm: number };
-  middle:   { lb_x: number; lb_y: number; pb_x: number; pb_y: number; lb_mm: number; pb_mm: number; total_mm: number };
-  apical:   { lb_x: number; lb_y: number; pb_x: number; pb_y: number; lb_mm: number; pb_mm: number; total_mm: number };
+  cervical: { palatal: BoneLevelPoint; labial: BoneLevelPoint };
+  middle:   { palatal: BoneLevelPoint; labial: BoneLevelPoint };
+  apical:   { palatal: BoneLevelPoint; labial: BoneLevelPoint };
 }
 
 interface Props {
@@ -535,6 +540,9 @@ export default function CephCanvasEditor({
 
               {/* ── Plan B 3-level measurement lines (bone thickness) ─────────── */}
               {showMeasurementLines && boneThickness && (() => {
+                // eslint-disable-next-line no-console
+                console.log("👉 FRONTEND RECEIVED BONE THICKNESS:", boneThickness);
+
                 const levels: Array<{
                   key: 'cervical' | 'middle' | 'apical';
                   label: string;
@@ -550,9 +558,14 @@ export default function CephCanvasEditor({
                   const lv = boneThickness[key];
                   if (!lv) return null;
 
+                  // Each level has { palatal: {x, y, mm}, labial: {x, y, mm} }
+                  const { palatal: pPt, labial: lPt } = lv;
+                  if (!pPt || !lPt) return null;
+
                   // Convert image-space coordinates → stage-space for rendering
-                  const [pb1x, pb1y] = toContent(lv.pb_x, lv.pb_y);
-                  const [lb1x, lb1y] = toContent(lv.lb_x, lv.lb_y);
+                  const [pb1x, pb1y] = toContent(pPt.x, pPt.y);
+                  const [lb1x, lb1y] = toContent(lPt.x, lPt.y);
+                  const totalMm = (pPt.mm ?? 0) + (lPt.mm ?? 0);
 
                   const SW = 1.5 / stageScale;   // stroke width (remains crisp under zoom)
                   const dotR = 3.5 / stageScale;
@@ -584,7 +597,7 @@ export default function CephCanvasEditor({
                       <Text
                         x={(pb1x + lb1x) / 2 + (4 / stageScale)}
                         y={(pb1y + lb1y) / 2 - (6 / stageScale)}
-                        text={`${label}: ${lv.total_mm.toFixed(1)}mm`}
+                        text={`${label}: ${totalMm.toFixed(1)}mm`}
                         fontSize={10 / stageScale}
                         fontStyle="bold"
                         fill={color}
