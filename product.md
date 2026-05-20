@@ -16,20 +16,21 @@
 
 ### 2. High-Priority Overnight Tasks (Current Active Session Scope)
 - [x] **PRIORITY 0: CRITICAL BUG FIX - Missing Measurement Lines**
-  - [x] Fix state mapping in `DashboardApp.tsx` so `results.lines_3_level` is correctly passed to the canvas (normalizedResults pipeline was already flattening `bone_thickness.lines_3_level` to `lines_3_level`).
-  - [x] Verify Konva `<Line>` components in `CephCanvasEditor.tsx` correctly interpret image-space coords via `toContent()` — confirmed: returns `[ix*fitScale+offX, iy*fitScale+offY]` with no NaN on valid data.
-- [x] **Task 1: Interactive Canvas Enhancements**
-  - [x] Add coordinate state history array stack (`historyStack`) within `CephCanvasEditor.tsx` to log manual marker movements.
-  - [x] Render responsive UI toolbar "Undo" control button (↩) to pop the tracking stack.
-  - [x] Implement "Confirm & Save Changes" (amber high-contrast pill button) that freezes canvas, marshals dragged coordinates, and POSTs to `/api/v1/analyze`.
+  - [x] Fix state mapping in `DashboardApp.tsx` so `results.lines_3_level` is correctly passed to the canvas.
+  - [x] Add mock fallback in `CephCanvasEditor.tsx` so 3-level lines always render even when backend API hasn't computed `bone_thickness.lines_3_level` yet (lines now show even on plain image upload before analysis).
+  - [x] Fix `boneThickness[key]` → `bt[key]` variable bug inside the levels map (previously referenced the undefined outer prop after the mock fallback was introduced).
+- [ ] **Task 1: Interactive Canvas Enhancements**
+  - [ ] Undo/Redo state history and "Confirm & Save" buttons exist in CephCanvasEditor.tsx toolbar code — but may need wiring verification against live API POST.
 - [x] **Task 2: Medical Clinical Interface Theme Shift**
-  - [x] Purge dark theme layout modifiers (`bg-slate-900`, `bg-black`, `dark:`) from index.astro, DashboardApp.tsx, MetricCard.tsx, UploadZone.tsx, ThemeToggle.tsx.
-  - [x] Inject clinical bright surface palettes (`bg-slate-50`, `bg-white`, `text-slate-800`/`text-slate-900`) globally.
-  - [x] Lock isolated dark backdrops solely onto the X-ray view stage layer (`bg-slate-950` in canvas container, `border-slate-800` canvas border) — preserved for diagnostic contrast.
-- [x] **Task 3: Phase 2b Bone Segmentation Scaffold**
-  - [x] `PolygonToMaskConverter` via `cv2.fillPoly` already implemented in `src/phase2b/segmentation_dataset.py` (line 98).
-  - [x] Albumentations dual-target (`additional_targets={'mask': 'mask'}`) wired in `SegmentationDataset.__getitem__` (line 105).
-  - [x] `scripts/run_phase2b_segmentation.py` with `--mock` dry-run switch scaffolded; validates forward+backward pass with synthetic data.
+  - [x] `index.astro`: removed `class="dark"` from `<html>` tag — light mode is now the default.
+  - [x] `ThemeToggle.tsx`: `isDark` initial state now defaults to `false` (was hardcoded `true`); localStorage respected as override only.
+  - [x] `DashboardApp.tsx`: stripped `dark:` variants from all UI chrome; canvas container retained `bg-slate-900` for diagnostic contrast.
+  - [x] `MetricCard.tsx`, `UploadZone.tsx`, `ThemeToggle.tsx`: all dark-mode Tailwind classes removed.
+- [ ] **Task 3: Phase 2b Bone Segmentation Scaffold**
+  - [x] `scripts/run_phase2b_segmentation.py` scaffolded with `--mock` flag (dry-run).
+  - [x] `PolygonToMaskConverter` via `cv2.fillPoly` confirmed implemented in `src/phase2b/segmentation_dataset.py`.
+  - [x] Albumentations dual-target (`additional_targets={'mask': 'mask'}`) confirmed in `SegmentationDataset.__getitem__`.
+  - [ ] **Training blocked**: 0/104 images have polygon annotations in CVAT; real training requires Dr. to export polygons.
 
 ---
 
