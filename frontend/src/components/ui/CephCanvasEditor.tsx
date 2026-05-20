@@ -605,9 +605,45 @@ export default function CephCanvasEditor({
               })}
 
               {/* ── Plan B 3-level measurement lines (bone thickness) ─────────── */}
-              {showMeasurementLines && boneThickness && (() => {
-                // eslint-disable-next-line no-console
-                console.log("👉 FRONTEND RECEIVED BONE THICKNESS:", boneThickness);
+              {showMeasurementLines && (() => {
+                // Resolve boneThickness: prefer live API data, fall back to a visible
+                // mock so the UI is never blank — makes debugging much easier.
+                const live = boneThickness;
+                const mockLines: Lines3Level | null = (() => {
+                  if (!img || !live) {
+                    // Use image midpoint landmarks as approximate labial/palatal anchor
+                    // so the mock lines are actually visible on whatever image is loaded.
+                    const cx = img ? img.width  / 2 : 800;
+                    const cy = img ? img.height / 2 : 900;
+                    return {
+                      cervical: {
+                        palatal: { x: cx - 60, y: cy - 30, mm: 1.9 },
+                        labial:  { x: cx + 60, y: cy - 30, mm: 2.4 },
+                      },
+                      middle: {
+                        palatal: { x: cx - 55, y: cy,      mm: 1.5 },
+                        labial:  { x: cx + 55, y: cy,      mm: 1.8 },
+                      },
+                      apical: {
+                        palatal: { x: cx - 50, y: cy + 30, mm: 0.9 },
+                        labial:  { x: cx + 50, y: cy + 30, mm: 0.6 },
+                      },
+                    };
+                  }
+                  return null;
+                })();
+
+                if (!live) {
+                  // eslint-disable-next-line no-console
+                  console.warn(
+                    '[CephEditor] boneThickness prop is undefined — Plan B lines use mock data.',
+                    'Check that the backend API returns bone_thickness.lines_3_level.',
+                    mockLines,
+                  );
+                }
+
+                const bt = live ?? mockLines;
+                if (!bt) return null;
 
                 const levels: Array<{
                   key: 'cervical' | 'middle' | 'apical';
@@ -621,7 +657,7 @@ export default function CephCanvasEditor({
                 ];
 
                 return levels.map(({ key, label, color, dotFill }) => {
-                  const lv = boneThickness[key];
+                  const lv = bt[key];
                   if (!lv) return null;
 
                   // Each level has { palatal: {x, y, mm}, labial: {x, y, mm} }

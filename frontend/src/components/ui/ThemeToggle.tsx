@@ -1,10 +1,19 @@
 import React, { useEffect, useState } from 'react';
 
 export default function ThemeToggle() {
-  // Mirror the class already set by the inline <script> — dark is the default
-  const [isDark, setIsDark] = useState(true);
+  // Default to light (no 'dark' class on <html>). useEffect syncs with actual
+  // DOM state on mount; localStorage overrides only if user previously set a preference.
+  const [isDark, setIsDark] = useState(() => {
+    if (typeof window !== 'undefined') {
+      const saved = localStorage.getItem('theme');
+      if (saved === 'dark')  return true;
+      if (saved === 'light') return false;
+    }
+    return false; // light by default
+  });
 
   useEffect(() => {
+    // Sync React state with whatever the DOM currently shows (handles SSR hydration)
     setIsDark(document.documentElement.classList.contains('dark'));
   }, []);
 
