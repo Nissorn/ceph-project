@@ -19,6 +19,8 @@
   - [x] Fix state mapping in `DashboardApp.tsx` so `results.lines_3_level` is correctly passed to the canvas.
   - [x] Add mock fallback in `CephCanvasEditor.tsx` so 3-level lines always render even when backend API hasn't computed `bone_thickness.lines_3_level` yet (lines now show even on plain image upload before analysis).
   - [x] Fix `boneThickness[key]` → `bt[key]` variable bug inside the levels map (previously referenced the undefined outer prop after the mock fallback was introduced).
+  - [x] Rewrite `compute_bone_thickness_3_levels` math: 6 independent tooth→bone gap distances (palatal+labial at cervical/middle/apical) with precise pixel start/end coordinates. Old bone-extent math (Bone→Bone passing through tooth) replaced with `_tooth_side_to_bone()` nearest-point logic.
+  - [x] CephCanvasEditor TS interface updated to `Segment6` / `Lines3Level` schema; mockLines now contains separate tooth+bone coords per segment; Konva renders 6 independent gap lines (violet P:Xmm palatal, orange L:Xmm labial) with level badge.
 - [ ] **Task 1: Interactive Canvas Enhancements**
   - [ ] Undo/Redo state history and "Confirm & Save" buttons exist in CephCanvasEditor.tsx toolbar code — but may need wiring verification against live API POST.
 - [x] **Task 2: Medical Clinical Interface Theme Shift**
@@ -26,6 +28,7 @@
   - [x] `ThemeToggle.tsx`: `isDark` initial state now defaults to `false` (was hardcoded `true`); localStorage respected as override only.
   - [x] `DashboardApp.tsx`: stripped `dark:` variants from all UI chrome; canvas container retained `bg-slate-900` for diagnostic contrast.
   - [x] `MetricCard.tsx`, `UploadZone.tsx`, `ThemeToggle.tsx`: all dark-mode Tailwind classes removed.
+  - [x] Toolbar contrast fix: high-contrast `text-white` labels, larger checkboxes, disabled Undo has distinct border style, amber Confirm&Save pill, Dev and ✕ hide buttons.
 - [ ] **Task 3: Phase 2b Bone Segmentation Scaffold**
   - [x] `scripts/run_phase2b_segmentation.py` scaffolded with `--mock` flag (dry-run).
   - [x] `PolygonToMaskConverter` via `cv2.fillPoly` confirmed implemented in `src/phase2b/segmentation_dataset.py`.
@@ -71,9 +74,14 @@ Alveolar bone layer thickness computation runs two systems side-by-side to accom
     "palatal_min_mm": 7.42,
     "classification": "Thick Alveolar Type",
     "lines_3_level": {
-      "cervical": { "palatal": {"x": 1065.2, "y": 1345.1, "mm": 1.9}, "labial": {"x": 1120.4, "y": 1338.3, "mm": 2.4} },
-      "middle": { "palatal": {"x": 1062.1, "y": 1300.5, "mm": 1.5}, "labial": {"x": 1112.8, "y": 1295.2, "mm": 1.8} },
-      "apical": { "palatal": {"x": 1059.8, "y": 1270.2, "mm": 0.9}, "labial": {"x": 1107.1, "y": 1266.0, "mm": 0.6} }
+      "cervical": {
+        "palatal_distance_mm": 1.9, "palatal_tooth_x": 1005.2, "palatal_tooth_y": 1345.1,
+        "palatal_bone_x": 945.1, "palatal_bone_y": 1345.1,
+        "labial_distance_mm": 2.4, "labial_tooth_x": 1120.4, "labial_tooth_y": 1338.3,
+        "labial_bone_x": 1175.2, "labial_bone_y": 1338.3
+      },
+      "middle": { ... },
+      "apical": { ... }
     }
   },
   "metrics": { ... }
