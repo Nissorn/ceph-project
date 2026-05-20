@@ -711,6 +711,57 @@ def classify_bone_thickness_tier(
 # --------------------------------------------------------------------------
 # Plan B -- 3-Level Root Line Distances (for UI visualization)
 # --------------------------------------------------------------------------
+def _min_point_to_contour(pt: np.ndarray, contour: np.ndarray) -> Tuple[float, float, float]:
+    """Return (distance_px, closest_contour_x, closest_contour_y) from pt to contour."""
+    if len(contour) == 0:
+        return 0.0, float(pt[0]), float(pt[1])
+    dists = np.linalg.norm(contour - pt, axis=1)
+    idx = int(np.argmin(dists))
+    return float(dists[idx]), float(contour[idx, 0]), float(contour[idx, 1])
+
+
+def _tooth_side_to_bone(
+    tooth_pts: np.ndarray,
+    bone_pts: np.ndarray,
+    anchor: np.ndarray,
+    perp: np.ndarray,
+    mm_per_pixel: float,
+) -> Dict[str, float]:
+    """Compute minimum tooth-surface → bone-surface distance along the perpendicular axis.
+
+    Finds the tooth-surface point closest to the anchor along the perpendicular,
+    and the bone-surface point closest to the anchor along the same axis, then
+    returns the distance between them in mm plus the exact coordinates of both
+    endpoints so the frontend can draw the gap segment.
+
+    Returns
+    -------
+    dict with keys: distance_mm, tooth_x, tooth_y, bone_x, bone_y
+    """
+    if len(tooth_pts) == 0 or len(bone_pts) == 0:
+        return {"distance_mm": 0.0, "tooth_x": 0.0, "tooth_y": 0.0, "bone_x": 0.0, "bone_y": 0.0}
+
+    # Project all points onto the perpendicular axis relative to anchor
+    tooth_proj = (tooth_pts - anchor) @ perp   # 1-D projections
+    bone_proj  = (bone_pts  - anchor) @ perp
+
+    # Tooth point with max projection = outermost tooth surface on this side
+    tooth_idx  = int(np.argmax(tooth_proj))
+    bone_idx   = int(np.argmin(bone_proj))      # bone point closest to tooth
+
+    tooth_x, tooth_y = float(tooth_pts[tooth_idx, 0]), float(tooth_pts[tooth_idx, 1])
+    bone_x,  bone_y  = float(bone_pts[bone_idx,  0]), float(bone_pts[bone_idx,  1])
+
+    dist_px = float(np.linalg.norm(tooth_pts[tooth_idx] - bone_pts[bone_idx]))
+    return {
+        "distance_mm": dist_px * mm_per_pixel,
+        "tooth_x":     tooth_x,
+        "tooth_y":     tooth_y,
+        "bone_x":      bone_x,
+        "bone_y":      bone_y,
+    }
+
+
 def compute_bone_thickness_3_levels(
     tooth_contour: np.ndarray,
     labial_bone_contour: np.ndarray,
@@ -718,64 +769,71 @@ def compute_bone_thickness_3_levels(
     u1_axis_vector: Tuple[Tuple[float, float], Tuple[float, float]],
     mm_per_pixel: float = 0.0984,
 ) -> Dict[str, Dict[str, float]]:
-    """Compute bone thickness at three U1-axis levels (cervical / middle / apical).
+    """Compute 6 tooth-to-bone distances at three U1-axis levels (cervical / middle / apical).
+
+    At each level, two distances are computed:
+      palatal -- minimum distance from the palatal tooth surface to the palatal bone surface
+      labial  -- minimum distance from the labial  tooth surface to the labial  bone surface
 
     Returns
     -------
     dict keyed by level name ("cervical", "middle", "apical"), each containing:
-        cx, cy  - centre-point coordinates on the U1 axis where the
-                  perpendicular was cast (image pixel space).
-        lb_mm   -- labial  bone thickness (px-extent × mm_per_pixel)
-        pb_mm   -- palatal bone thickness (px-extent × mm_per_pixel)
+        palatal_distance_mm  -- palatal gap in mm
+        palatal_tooth_x, palatal_tooth_y  -- nearest tooth-surface point (image px)
+        palatal_bone_x,  palatal_bone_y   -- nearest bone-surface point   (image px)
+        labial_distance_mm   -- labial  gap in mm
+        labial_tooth_x,  labial_tooth_y   -- nearest tooth-surface point (image px)
+        labial_bone_x,   labial_bone_y    -- nearest bone-surface point  (image px)
     """
-    tip_xy = np.array(u1_axis_vector[0], dtype=float)
+    tip_xy  = np.array(u1_axis_vector[0], dtype=float)
     apex_xy = np.array(u1_axis_vector[1], dtype=float)
 
-    u1_vec = apex_xy - tip_xy
-    u1_len = float(np.linalg.norm(u1_vec))
+    u1_vec  = apex_xy - tip_xy
+    u1_len  = float(np.linalg.norm(u1_vec))
     if u1_len == 0.0:
-        return {
-            level: {"cx": 0.0, "cy": 0.0, "lb_mm": 0.0, "pb_mm": 0.0}
-            for level in ("cervical", "middle", "apical")
-        }
+        blank = {"distance_mm": 0.0, "tooth_x": 0.0, "tooth_y": 0.0, "bone_x": 0.0, "bone_y": 0.0}
+        return {level: {**blank, **blank} for level in ("cervical", "middle", "apical")}
 
     u1_unit = u1_vec / u1_len
     u1_perp = np.array([-u1_unit[1], u1_unit[0]], dtype=float)   # 90° clockwise
 
-    # Three measurement heights along the U1 axis (t from tip)
+    # Three measurement heights along the U1 axis (fractional distance from tip)
     t_cervical = u1_len / 3.0
     t_middle   = 2.0 * u1_len / 3.0
     t_apical   = u1_len
 
-    levels = [
-        ("cervical", tip_xy + u1_unit * t_cervical),
-        ("middle",   tip_xy + u1_unit * t_middle),
-        ("apical",   tip_xy + u1_unit * t_apical),
-    ]
-
-    def _side_thickness_with_proj(
-        bone_pts: np.ndarray, center_pt: np.ndarray, perp: np.ndarray
-    ) -> Tuple[float, float]:
-        """Return (width_mm, max_half_extent_px) for a bone side."""
-        if len(bone_pts) == 0:
-            return 0.0, 0.0
-        vectors = bone_pts - center_pt
-        projections = vectors @ perp
-        width_px = float(np.max(projections) - np.min(projections))
-        half_extent_px = float(np.max(np.abs(projections)))
-        return width_px * mm_per_pixel, half_extent_px
-
     results = {}
-    for level_name, center_pt in levels:
-        lb_mm, lb_half = _side_thickness_with_proj(
-            labial_bone_contour, center_pt, u1_perp)
-        pb_mm, pb_half = _side_thickness_with_proj(
-            palatal_bone_contour, center_pt, u1_perp)
+    for level_name, t in (("cervical", t_cervical), ("middle", t_middle), ("apical", t_apical)):
+        anchor = tip_xy + u1_unit * t
+
+        palatal = _tooth_side_to_bone(
+            tooth_pts=tooth_contour,
+            bone_pts=palatal_bone_contour,
+            anchor=anchor,
+            perp=u1_perp,
+            mm_per_pixel=mm_per_pixel,
+        )
+        labial = _tooth_side_to_bone(
+            tooth_pts=tooth_contour,
+            bone_pts=labial_bone_contour,
+            anchor=anchor,
+            perp=u1_perp,
+            mm_per_pixel=mm_per_pixel,
+        )
+
         results[level_name] = {
-            "cx":    float(center_pt[0]),
-            "cy":    float(center_pt[1]),
-            "lb_mm": lb_mm,
-            "pb_mm": pb_mm,
+            # Palatal side
+            "palatal_distance_mm": round(palatal["distance_mm"], 3),
+            "palatal_tooth_x":     palatal["tooth_x"],
+            "palatal_tooth_y":     palatal["tooth_y"],
+            "palatal_bone_x":      palatal["bone_x"],
+            "palatal_bone_y":      palatal["bone_y"],
+            # Labial side
+            "labial_distance_mm":  round(labial["distance_mm"], 3),
+            "labial_tooth_x":      labial["tooth_x"],
+            "labial_tooth_y":      labial["tooth_y"],
+            "labial_bone_x":       labial["bone_x"],
+            "labial_bone_y":        labial["bone_y"],
         }
 
     return results

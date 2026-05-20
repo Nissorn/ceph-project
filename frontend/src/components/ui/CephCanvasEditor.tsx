@@ -21,16 +21,25 @@ export interface PolygonShape {
 }
 
 // ── Plan B 3-level bone thickness lines from backend ─────────────────────────
-export interface BoneLevelPoint {
-  x: number;   // image-space x
-  y: number;   // image-space y
-  mm: number;  // thickness in mm
+// New 6-segment schema: at each of 3 levels, two independent tooth→bone gaps
+// are measured — one on the PALATAL side, one on the LABIAL side.
+// Each segment has its own start/end pixel coordinates so the frontend draws
+// the exact gap, NOT a line through the tooth.
+export interface Segment6 {
+  // Palatal side (tooth surface → palatal bone surface)
+  palatal_distance_mm: number;
+  palatal_tooth_x: number;  palatal_tooth_y: number;
+  palatal_bone_x:  number;  palatal_bone_y:  number;
+  // Labial side (labial bone surface → tooth surface)
+  labial_distance_mm: number;
+  labial_tooth_x:  number;  labial_tooth_y:  number;
+  labial_bone_x:   number;  labial_bone_y:   number;
 }
-export interface Lines3Level {
-  cervical: { palatal: BoneLevelPoint; labial: BoneLevelPoint };
-  middle:   { palatal: BoneLevelPoint; labial: BoneLevelPoint };
-  apical:   { palatal: BoneLevelPoint; labial: BoneLevelPoint };
-}
+export type Lines3Level = {
+  cervical: Segment6;
+  middle:   Segment6;
+  apical:   Segment6;
+};
 
 interface Props {
   imageFile: File;
@@ -617,16 +626,28 @@ export default function CephCanvasEditor({
                     const cy = img ? img.height / 2 : 900;
                     return {
                       cervical: {
-                        palatal: { x: cx - 60, y: cy - 30, mm: 1.9 },
-                        labial:  { x: cx + 60, y: cy - 30, mm: 2.4 },
+                        palatal_distance_mm: 1.9,
+                        palatal_tooth_x: cx - 60, palatal_tooth_y: cy - 30,
+                        palatal_bone_x:  cx - 110, palatal_bone_y: cy - 30,
+                        labial_distance_mm: 2.4,
+                        labial_tooth_x: cx + 60,  labial_tooth_y: cy - 30,
+                        labial_bone_x:  cx + 110, labial_bone_y:  cy - 30,
                       },
                       middle: {
-                        palatal: { x: cx - 55, y: cy,      mm: 1.5 },
-                        labial:  { x: cx + 55, y: cy,      mm: 1.8 },
+                        palatal_distance_mm: 1.5,
+                        palatal_tooth_x: cx - 55, palatal_tooth_y: cy,
+                        palatal_bone_x:  cx - 105, palatal_bone_y: cy,
+                        labial_distance_mm: 1.8,
+                        labial_tooth_x: cx + 55,  labial_tooth_y: cy,
+                        labial_bone_x:  cx + 105, labial_bone_y:  cy,
                       },
                       apical: {
-                        palatal: { x: cx - 50, y: cy + 30, mm: 0.9 },
-                        labial:  { x: cx + 50, y: cy + 30, mm: 0.6 },
+                        palatal_distance_mm: 0.9,
+                        palatal_tooth_x: cx - 50, palatal_tooth_y: cy + 30,
+                        palatal_bone_x:  cx - 95,  palatal_bone_y: cy + 30,
+                        labial_distance_mm: 0.6,
+                        labial_tooth_x: cx + 50,  labial_tooth_y: cy + 30,
+                        labial_bone_x:  cx + 95,  labial_bone_y:  cy + 30,
                       },
                     };
                   }
@@ -660,54 +681,127 @@ export default function CephCanvasEditor({
                   const lv = bt[key];
                   if (!lv) return null;
 
-                  // Each level has { palatal: {x, y, mm}, labial: {x, y, mm} }
-                  const { palatal: pPt, labial: lPt } = lv;
-                  if (!pPt || !lPt) return null;
+                  // ── Segment colours ──────────────────────────────────────────────
+                  // Palatal gap:  blue-violet  (always this colour)
+                  // Labial  gap:  warm amber    (always this colour)
+                  const PALATAL_COL  = '#a78bfa';   // violet — palatal side
+                  const LABIAL_COL   = '#fb923c';   // orange  — labial side
+                  const PALATAL_DOT  = '#c4b5fd';
+                  const LABIAL_DOT   = '#fdba74';
 
-                  // Convert image-space coordinates → stage-space for rendering
-                  const [pb1x, pb1y] = toContent(pPt.x, pPt.y);
-                  const [lb1x, lb1y] = toContent(lPt.x, lPt.y);
-                  const totalMm = (pPt.mm ?? 0) + (lPt.mm ?? 0);
+                  const SW   = 1.5 / stageScale;   // stroke width (crisp at all zoom levels)
+                  const dotR = 3.0 / stageScale;    // endpoint circle radius
 
-                  const SW = 1.5 / stageScale;   // stroke width (remains crisp under zoom)
-                  const dotR = 3.5 / stageScale;
+                  // Helper: convert image-px → stage-px via toContent()
+                  const toStage = (imgX: number, imgY: number) => {
+                    const [sx, sy] = toContent(imgX, imgY);
+                    if (Number.isNaN(sx) || Number.isNaN(sy)) return null;
+                    return [sx, sy] as [number, number];
+                  };
+
+                  // ── Palatal gap segment ─────────────────────────────────────────
+                  const pTooth = toStage(lv.palatal_tooth_x, lv.palatal_tooth_y);
+                  const pBone  = toStage(lv.palatal_bone_x,  lv.palatal_bone_y);
+
+                  // ── Labial gap segment ─────────────────────────────────────────
+                  const lTooth = toStage(lv.labial_tooth_x,  lv.labial_tooth_y);
+                  const lBone  = toStage(lv.labial_bone_x,   lv.labial_bone_y);
+
+                  if (!pTooth || !pBone || !lTooth || !lBone) return null;
+
+                  const [pTx, pTy] = pTooth;
+                  const [pBx, pBy] = pBone;
+                  const [lBx, lBy] = lBone;
+                  const [lTx, lTy] = lTooth;
+
+                  // Vertical offset so palatal labels sit above, labial below
+                  const labelOff = 12 / stageScale;
 
                   return (
                     <Group key={key} listening={false}>
-                      {/* Main measurement line: palatal → labial */}
+                      {/* ── Palatal gap (tooth surface → palatal bone) ────────────── */}
                       <Line
-                        points={[pb1x, pb1y, lb1x, lb1y]}
-                        stroke={color}
+                        points={[pTx, pTy, pBx, pBy]}
+                        stroke={PALATAL_COL}
                         strokeWidth={SW}
-                        opacity={0.9}
+                        opacity={0.95}
                       />
-                      {/* Endpoints: palatal (filled circle) */}
+                      {/* Palatal tooth-side endpoint */}
                       <Line
-                        points={[pb1x - dotR, pb1y, pb1x + dotR, pb1y]}
-                        stroke={dotFill}
+                        points={[pTx - dotR, pTy, pTx + dotR, pTy]}
+                        stroke={PALATAL_DOT}
                         strokeWidth={1 / stageScale}
                         opacity={1}
                       />
-                      {/* Endpoints: labial (filled circle) */}
+                      {/* Palatal bone-side endpoint */}
                       <Line
-                        points={[lb1x - dotR, lb1y, lb1x + dotR, lb1y]}
-                        stroke={dotFill}
+                        points={[pBx - dotR, pBy, pBx + dotR, pBy]}
+                        stroke={PALATAL_DOT}
                         strokeWidth={1 / stageScale}
                         opacity={1}
                       />
-                      {/* Midpoint label: level abbreviation + total mm */}
+                      {/* Palatal label — "P: X.Xmm" above the palatal gap */}
                       <Text
-                        x={(pb1x + lb1x) / 2 + (4 / stageScale)}
-                        y={(pb1y + lb1y) / 2 - (6 / stageScale)}
-                        text={`${label}: ${totalMm.toFixed(1)}mm`}
-                        fontSize={10 / stageScale}
+                        x={(pTx + pBx) / 2 - (18 / stageScale)}
+                        y={Math.min(pTy, pBy) - labelOff - (8 / stageScale)}
+                        text={`P: ${lv.palatal_distance_mm.toFixed(1)}mm`}
+                        fontSize={9 / stageScale}
                         fontStyle="bold"
-                        fill={color}
+                        fill={PALATAL_COL}
                         shadowColor="black"
                         shadowBlur={3 / stageScale}
-                        shadowOpacity={0.8}
+                        shadowOpacity={0.7}
                         shadowOffsetX={1 / stageScale}
                         shadowOffsetY={1 / stageScale}
+                      />
+
+                      {/* ── Labial gap (labial bone → tooth surface) ────────────── */}
+                      <Line
+                        points={[lBx, lBy, lTx, lTy]}
+                        stroke={LABIAL_COL}
+                        strokeWidth={SW}
+                        opacity={0.95}
+                      />
+                      {/* Labial bone-side endpoint */}
+                      <Line
+                        points={[lBx - dotR, lBy, lBx + dotR, lBy]}
+                        stroke={LABIAL_DOT}
+                        strokeWidth={1 / stageScale}
+                        opacity={1}
+                      />
+                      {/* Labial tooth-side endpoint */}
+                      <Line
+                        points={[lTx - dotR, lTy, lTx + dotR, lTy]}
+                        stroke={LABIAL_DOT}
+                        strokeWidth={1 / stageScale}
+                        opacity={1}
+                      />
+                      {/* Labial label — "L: X.Xmm" below the labial gap */}
+                      <Text
+                        x={(lTx + lBx) / 2 + (4 / stageScale)}
+                        y={Math.max(lTy, lBy) + (3 / stageScale)}
+                        text={`L: ${lv.labial_distance_mm.toFixed(1)}mm`}
+                        fontSize={9 / stageScale}
+                        fontStyle="bold"
+                        fill={LABIAL_COL}
+                        shadowColor="black"
+                        shadowBlur={3 / stageScale}
+                        shadowOpacity={0.7}
+                        shadowOffsetX={1 / stageScale}
+                        shadowOffsetY={1 / stageScale}
+                      />
+
+                      {/* ── Level badge (C / M / A) centred between palatal & labial gaps */}
+                      <Text
+                        x={(pBx + lBx) / 2 - (6 / stageScale)}
+                        y={(pBy + lBy) / 2 - (5 / stageScale)}
+                        text={label}
+                        fontSize={10 / stageScale}
+                        fontStyle="bold"
+                        fill="white"
+                        shadowColor={color}
+                        shadowBlur={6 / stageScale}
+                        shadowOpacity={0.9}
                       />
                     </Group>
                   );
@@ -770,69 +864,73 @@ export default function CephCanvasEditor({
           isToolbarOpen ? (
             <div className="absolute bottom-4 left-1/2 -translate-x-1/2 flex flex-col items-center gap-1.5 w-[95%] md:w-auto max-w-4xl z-50 animate-fade-in pointer-events-none">
 
-              {/* Instructions helper row (hidden on tight screens to save vertical space) */}
-              <div className="hidden sm:flex items-center gap-1.5 text-[10px] text-white/50 bg-black/40 px-3 py-0.5 rounded-full backdrop-blur-sm border border-white/5 pointer-events-auto select-none">
-                <span><kbd className={chip}>Drag</kbd> move</span>
-                <span>·</span>
-                <span><kbd className={chip}>Scroll</kbd> zoom</span>
-                <span>·</span>
-                <span><kbd className={chip}>⇧+Click</kbd> add pt</span>
-                <span>·</span>
-                <span><kbd className={chip}>DblClick</kbd> del pt</span>
+              {/* Instructions helper row */}
+              <div className="hidden sm:flex items-center gap-1.5 text-[11px] text-slate-200 bg-black/60 px-3 py-1 rounded-full backdrop-blur-sm border border-white/10 pointer-events-auto select-none font-medium">
+                <kbd className="bg-white/15 border border-white/20 text-white/90 px-1.5 py-0.5 rounded font-mono text-[10px]">Drag</kbd>
+                <span className="text-white/40">move</span>
+                <span className="text-white/20 mx-1">·</span>
+                <kbd className="bg-white/15 border border-white/20 text-white/90 px-1.5 py-0.5 rounded font-mono text-[10px]">Scroll</kbd>
+                <span className="text-white/40">zoom</span>
+                <span className="text-white/20 mx-1">·</span>
+                <kbd className="bg-white/15 border border-white/20 text-white/90 px-1.5 py-0.5 rounded font-mono text-[10px]">⇧+Click</kbd>
+                <span className="text-white/40">add pt</span>
+                <span className="text-white/20 mx-1">·</span>
+                <kbd className="bg-white/15 border border-white/20 text-white/90 px-1.5 py-0.5 rounded font-mono text-[10px]">DblClick</kbd>
+                <span className="text-white/40">del pt</span>
               </div>
 
               {/* Main functional control bar */}
-              <div className="w-full md:w-auto bg-black/85 backdrop-blur-md text-white/90 px-4 py-2 rounded-xl md:rounded-full border border-white/10 flex flex-wrap md:flex-nowrap gap-x-3 gap-y-1.5 text-xs items-center justify-center shadow-2xl pointer-events-auto">
+              <div className="w-full md:w-auto bg-black/90 backdrop-blur-md text-white px-5 py-2.5 rounded-xl md:rounded-full border border-white/15 flex flex-wrap md:flex-nowrap gap-x-4 gap-y-2 text-xs items-center justify-center shadow-2xl pointer-events-auto">
 
                 {/* Visibility toggles */}
-                <div className="flex items-center gap-2.5">
-                  <label className="flex items-center gap-1 cursor-pointer select-none whitespace-nowrap">
+                <div className="flex items-center gap-3">
+                  <label className="flex items-center gap-1.5 cursor-pointer select-none whitespace-nowrap text-white font-medium">
                     <input
                       type="checkbox" checked={showLandmarks}
                       onChange={(e) => setShowLandmarks(e.target.checked)}
-                      className="accent-amber-400 w-3 h-3 cursor-pointer"
+                      className="accent-amber-400 w-3.5 h-3.5 cursor-pointer rounded"
                     />
-                    Landmarks
+                    <span className="text-white/90">Landmarks</span>
                   </label>
-                  <label className="flex items-center gap-1 cursor-pointer select-none whitespace-nowrap">
+                  <label className="flex items-center gap-1.5 cursor-pointer select-none whitespace-nowrap text-white font-medium">
                     <input
                       type="checkbox" checked={showPolygons}
                       onChange={(e) => setShowPolygons(e.target.checked)}
-                      className="accent-cyan-400 w-3 h-3 cursor-pointer"
+                      className="accent-cyan-400 w-3.5 h-3.5 cursor-pointer rounded"
                     />
-                    Polygons
+                    <span className="text-white/90">Polygons</span>
                   </label>
-                  <label className="flex items-center gap-1 cursor-pointer select-none whitespace-nowrap">
+                  <label className="flex items-center gap-1.5 cursor-pointer select-none whitespace-nowrap text-white font-medium">
                     <input
                       type="checkbox" checked={showMeasurementLines}
                       onChange={(e) => setShowMeasurementLines(e.target.checked)}
-                      className="accent-pink-400 w-3 h-3 cursor-pointer"
+                      className="accent-pink-400 w-3.5 h-3.5 cursor-pointer rounded"
                     />
-                    Lines
+                    <span className="text-white/90">Lines</span>
                   </label>
                 </div>
 
-                <span className="text-white/20 select-none">|</span>
+                <span className="text-white/25 select-none font-light">|</span>
 
                 {/* Point size slider */}
-                <label className="flex items-center gap-1.5 select-none whitespace-nowrap">
-                  <span className="text-white/60 hidden sm:inline">Size</span>
+                <label className="flex items-center gap-2 select-none whitespace-nowrap">
+                  <span className="text-white/60 text-[11px] hidden sm:inline font-medium">Size</span>
                   <input
                     type="range" min="1" max="10" step="0.5"
                     value={pointSize}
                     onChange={(e) => setPointSize(Number(e.target.value))}
                     className="w-14 sm:w-16 accent-orange-400 cursor-pointer"
                   />
-                  <span className="tabular-nums font-mono w-4 text-right text-white/80">{pointSize}</span>
+                  <span className="tabular-nums font-mono w-5 text-right text-white/80">{pointSize}</span>
                 </label>
 
-                {/* Zoom indicator — fixed width via tabular-nums w-12 to prevent zoom text growth reflows */}
+                {/* Zoom indicator */}
                 {stageScale > 1 && (
                   <>
-                    <span className="text-white/20 select-none">|</span>
+                    <span className="text-white/25 select-none font-light">|</span>
                     <button
                       onClick={resetZoom}
-                      className="flex items-center justify-center gap-0.5 text-white/60 hover:text-white transition-colors whitespace-nowrap w-12 text-center tabular-nums font-mono bg-white/5 hover:bg-white/10 px-1.5 py-0.5 rounded text-[11px]"
+                      className="flex items-center justify-center gap-0.5 text-white/70 hover:text-white transition-colors whitespace-nowrap w-12 text-center tabular-nums font-mono bg-white/10 hover:bg-white/20 px-2 py-1 rounded text-[11px] font-medium border border-white/10"
                       title="Reset Zoom"
                     >
                       {Math.round(stageScale * 100)}%
@@ -840,31 +938,33 @@ export default function CephCanvasEditor({
                   </>
                 )}
 
-                <span className="text-white/20 select-none">|</span>
+                <span className="text-white/25 select-none font-light">|</span>
 
-                {/* TARGET 1: Undo — pops the history stack */}
+                {/* Undo */}
                 <button
                   onClick={undo}
                   disabled={historyStack.length === 0}
                   title="Undo last change"
-                  className={`flex items-center justify-center gap-1 px-2 py-0.5 rounded text-white/60 hover:text-white transition-colors whitespace-nowrap text-[11px] ${
-                    historyStack.length === 0 ? 'opacity-30 cursor-not-allowed' : 'hover:bg-white/10'
+                  className={`flex items-center justify-center gap-1 px-3 py-1 rounded-lg transition-colors whitespace-nowrap text-[11px] font-semibold border ${
+                    historyStack.length === 0
+                      ? 'text-white/25 border-white/5 cursor-not-allowed bg-white/5'
+                      : 'text-white/80 border-white/20 hover:bg-white/10 hover:text-white hover:border-white/30'
                   }`}
                 >
                   ↩ Undo
                 </button>
 
-                <span className="text-white/20 select-none">|</span>
+                <span className="text-white/25 select-none font-light">|</span>
 
-                {/* TARGET 1: Confirm & Save — high-contrast submit */}
+                {/* Confirm & Save — high-contrast amber pill */}
                 <button
                   onClick={handleConfirmAndSave}
                   disabled={isFrozen}
                   title="Confirm manual edits and trigger live recalculation"
-                  className={`flex items-center justify-center gap-1.5 px-3 py-1 rounded-full text-[11px] font-semibold transition-all whitespace-nowrap ${
+                  className={`flex items-center justify-center gap-1.5 px-4 py-1.5 rounded-full text-[11px] font-bold transition-all whitespace-nowrap shadow-md border ${
                     isFrozen
-                      ? 'bg-slate-600/50 text-slate-300 cursor-not-allowed'
-                      : 'bg-amber-400 hover:bg-amber-300 text-slate-900 hover:brightness-105 shadow-md'
+                      ? 'bg-white/10 border-white/20 text-white/40 cursor-not-allowed'
+                      : 'bg-amber-400 hover:bg-amber-300 text-slate-900 hover:brightness-110 border-amber-500/40 shadow-amber-400/20'
                   }`}
                 >
                   {isFrozen ? '✓ Saved' : 'Confirm & Save'}
@@ -873,35 +973,35 @@ export default function CephCanvasEditor({
                 {/* Selected element name */}
                 {selectedName && (
                   <>
-                    <span className="text-white/20 select-none">|</span>
-                    <span className="font-mono text-cyan-300 truncate max-w-[80px] sm:max-w-[100px] whitespace-nowrap">
+                    <span className="text-white/25 select-none font-light">|</span>
+                    <span className="font-mono text-cyan-300 truncate max-w-[80px] sm:max-w-[100px] whitespace-nowrap text-[11px] font-semibold">
                       ● {selectedName}
                     </span>
                   </>
                 )}
 
-                <span className="text-white/20 select-none">|</span>
+                <span className="text-white/25 select-none font-light">|</span>
 
                 {/* Debug mode toggle */}
                 <button
                   onClick={() => setIsDebugMode(v => !v)}
                   title={isDebugMode ? 'Hide debug tools' : 'Show debug tools'}
-                  className={`px-1.5 py-0.5 rounded transition-colors text-[11px] whitespace-nowrap ${
+                  className={`px-2.5 py-1 rounded-lg transition-colors text-[11px] whitespace-nowrap font-semibold border ${
                     isDebugMode
-                      ? 'bg-amber-500/30 text-amber-300 border border-amber-500/40 font-medium'
-                      : 'text-white/40 hover:text-white/70'
+                      ? 'bg-amber-500/25 text-amber-300 border-amber-500/40'
+                      : 'text-white/50 border-white/10 hover:text-white/80 hover:border-white/20'
                   }`}
                 >
                   Dev
                 </button>
 
-                <span className="text-white/20 select-none">|</span>
+                <span className="text-white/25 select-none font-light">|</span>
 
                 {/* Hide Toolbar Button */}
                 <button
                   onClick={() => setIsToolbarOpen(false)}
                   title="Minimize toolbar"
-                  className="text-white/40 hover:text-white transition-colors p-1 rounded hover:bg-white/5"
+                  className="text-white/40 hover:text-white/80 transition-colors p-1.5 rounded-lg hover:bg-white/10 border border-transparent hover:border-white/10"
                 >
                   <span className="text-xs font-bold leading-none">✕</span>
                 </button>
