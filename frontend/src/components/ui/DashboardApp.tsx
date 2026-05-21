@@ -351,14 +351,19 @@ export default function DashboardApp() {
               <MetricCard
                 title="U1-PP Angle"
                 value={results.u1_pp_angle}
-                subtitle={results.angle_zone ? `° — ${results.angle_zone}` : '° Degrees'}
-                status={results.u1_pp_status}
+                subtitle={results?.metrics?.angle_zone ? `° — ${results.metrics.angle_zone}` : '° Degrees'}
+                status={
+                  results?.metrics?.angle_zone === 'Retroclined' ||
+                  results?.metrics?.angle_zone === 'Proclined'
+                    ? 'warning'
+                    : 'normal'
+                }
               />
               <MetricCard
                 title="Root Apex Position"
-                value={results.root_apex_position ?? '—'}
+                value={results?.metrics?.root_apex_position ?? '—'}
                 subtitle=""
-                status={results.root_apex_status}
+                status={results?.metrics?.root_apex_position === 'Midway' ? 'normal' : 'warning'}
               />
               <MetricCard 
                 title="Maxillary Bone" 
