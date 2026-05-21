@@ -163,7 +163,9 @@ export default function DashboardApp() {
       // Safely parse and cleanly format numeric metrics to prevent excessive float layouts
       const rawAngle = payload.metrics?.u1_pp_angle_deg ?? 112.5;
       const u1_pp_angle = typeof rawAngle === 'number' && !isNaN(rawAngle) ? Number(rawAngle.toFixed(1)) : 112.5;
-      
+      const angle_zone = payload.metrics?.angle_zone ?? null;
+      const root_apex_position = payload.metrics?.root_apex_position ?? null;
+
       const rawMaxThick = payload.bone_thickness?.labial_min_mm ?? payload.maxillary?.bone_thickness_mm ?? 0;
       const maxillary_thickness = typeof rawMaxThick === 'number' && !isNaN(rawMaxThick) ? Number(rawMaxThick.toFixed(2)) : 0;
 
@@ -171,13 +173,19 @@ export default function DashboardApp() {
       const mandibular_thickness = typeof rawMandThick === 'number' && !isNaN(rawMandThick) ? Number(rawMandThick.toFixed(2)) : 0;
 
       // Robust status classifications tailored to precise clinical parameters
-      const u1_pp_status = u1_pp_angle > 115 ? 'warning' : u1_pp_angle < 105 ? 'warning' : 'normal';
+      // angle_zone: Retroclined (<105) and Proclined (>115) are both clinical warnings
+      const u1_pp_status = angle_zone === 'Retroclined' || angle_zone === 'Proclined' ? 'warning' : 'normal';
       const maxillary_status = maxillary_thickness < 2.0 ? 'critical' : maxillary_thickness < 2.5 ? 'warning' : 'normal';
       const mandibular_status = mandibular_thickness < 2.0 ? 'critical' : mandibular_thickness < 2.5 ? 'warning' : 'normal';
+      // Root apex position: Palatal or Labial is elevated risk; Midway is normal
+      const root_apex_status = root_apex_position === 'Midway' ? 'normal' : 'warning';
 
       const normalizedResults = {
         u1_pp_angle,
         u1_pp_status,
+        angle_zone,
+        root_apex_position,
+        root_apex_status,
         maxillary_thickness,
         maxillary_status,
         mandibular_thickness,
@@ -340,11 +348,17 @@ export default function DashboardApp() {
 
           {results && !isLoading && (
             <div className="flex flex-col gap-5 animate-fade-in">
-              <MetricCard 
-                title="U1-PP Angle" 
-                value={results.u1_pp_angle} 
-                subtitle="° Degrees" 
-                status={results.u1_pp_status} 
+              <MetricCard
+                title="U1-PP Angle"
+                value={results.u1_pp_angle}
+                subtitle={results.angle_zone ? `° — ${results.angle_zone}` : '° Degrees'}
+                status={results.u1_pp_status}
+              />
+              <MetricCard
+                title="Root Apex Position"
+                value={results.root_apex_position ?? '—'}
+                subtitle=""
+                status={results.root_apex_status}
               />
               <MetricCard 
                 title="Maxillary Bone" 

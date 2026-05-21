@@ -10,7 +10,12 @@ import numpy as np
 # Add project root to sys.path so we can import src.phase3.biomechanics
 _ROOT = Path(__file__).resolve().parent.parent.parent.parent  # …/ceph-v2-auto
 sys.path.insert(0, str(_ROOT))
-from src.phase3.biomechanics import calculate_metrics, compute_bone_thickness_full
+from src.phase3.biomechanics import (
+    calculate_metrics,
+    compute_bone_thickness_full,
+    _get_apex_position,
+    _get_angle_zone,
+)
 
 # Lazy singleton — model loaded once when first request hits the endpoint.
 _inference_service: InferenceService | None = None
@@ -112,6 +117,23 @@ async def analyze_endpoint(
         # Surface-level landmark errors should not abort the whole response
         metrics = {}
 
+    # ── Inject clinical heuristic strings into metrics ───────────────────────────
+    # These are computed from the raw metrics and sent alongside them.
+    if "lb_apex_dist_mm" in metrics and "pb_apex_dist_mm" in metrics:
+        metrics["root_apex_position"] = _get_apex_position(
+            metrics["lb_apex_dist_mm"], metrics["pb_apex_dist_mm"]
+        )
+    if "u1_pp_angle_deg" in metrics:
+        angle_zone_key = _get_angle_zone(metrics["u1_pp_angle_deg"])
+        # Map internal zone keys to the clinically-friendly labels:
+        # "<105" → "Retroclined", "105-115" → "Normal", ">115" → "Proclined"
+        _angle_zone_label = {
+            "<105": "Retroclined",
+            "105-115": "Normal",
+            ">115": "Proclined",
+        }
+        metrics["angle_zone"] = _angle_zone_label.get(angle_zone_key, "Unknown")
+
     # Map biomechanics output to the field names the frontend expects:
     #   lb_apex_dist_mm  → labial_min_mm    (Maxillary Bone = labial side)
     #   pb_apex_dist_mm  → mandibular_min_mm (Mandibular Bone = palatal side)
@@ -126,7 +148,7 @@ async def analyze_endpoint(
     response_data: Dict[str, Any] = {
         "landmarks": landmarks,
         "use_tta": result["use_tta"],
-        "metrics": {k: round(v, 3) for k, v in metrics.items()},
+        "metrics": {k: round(v, 3) if isinstance(v, float) else v for k, v in metrics.items()},
         "bone_thickness": bone_thickness,
     }
 
