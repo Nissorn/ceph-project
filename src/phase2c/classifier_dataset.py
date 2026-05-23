@@ -38,7 +38,7 @@ from src.phase2c.classifier import (
     apex_position_to_onehot,
     SCALAR_DIM,
 )
-from src.phase3.biomechanics import calculate_metrics, _get_apex_position
+from src.phase3.biomechanics import calculate_metrics, _get_apex_position, MetricsResult
 
 _REQUIRED_KEYPOINTS = ("Upper_tip", "Upper_apex", "ANS", "PNS", "LB", "PB")
 
@@ -79,7 +79,7 @@ def _compute_scalars(
     """
     Run Phase 3 biomechanics on a landmarks dict and return the 6-dim scalar tensor.
     """
-    metrics = calculate_metrics(landmarks, mm_per_pixel=mm_per_pixel)
+    metrics: MetricsResult = calculate_metrics(landmarks, mm_per_pixel=mm_per_pixel)
     apex_pos = _get_apex_position(
         metrics["lb_apex_dist_mm"],
         metrics["pb_apex_dist_mm"],

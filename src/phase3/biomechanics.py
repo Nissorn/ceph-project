@@ -328,13 +328,13 @@ def calculate_metrics(
     lb_apex_mm = lb_perp_px * mm_per_pixel
     pb_apex_mm = pb_perp_px * mm_per_pixel
 
-    return {
-        "u1_pp_angle_deg": u1_pp_angle_deg,
-        "lb_apex_dist_mm": lb_apex_mm,
-        "pb_apex_dist_mm": pb_apex_mm,
-        "lb_foot_px":      lb_foot,
-        "pb_foot_px":      pb_foot,
-    }
+    return MetricsResult(
+        u1_pp_angle_deg=u1_pp_angle_deg,
+        lb_apex_dist_mm=lb_apex_mm,
+        pb_apex_dist_mm=pb_apex_mm,
+        lb_foot_px=lb_foot,
+        pb_foot_px=pb_foot,
+    )
 
 
 # ---------------------------------------------------------------------------
