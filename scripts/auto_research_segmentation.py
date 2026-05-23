@@ -270,8 +270,8 @@ def compute_dice(pred: torch.Tensor, target: torch.Tensor, smooth: float = 1e-6)
     pred_sig = torch.sigmoid(pred)
     dice_per_class = []
     for c in range(pred.shape[1]):
-        p = pred_sig[:, c].reshape(-1)
-        t = target[:, c].reshape(-1)
+        p = pred_sig[:, c].reshape(-1).cpu().numpy()
+        t = target[:, c].reshape(-1).cpu().numpy()
         intersection = (p * t).sum()
         union = p.sum() + t.sum()
         dice_per_class.append((2.0 * intersection + smooth) / (union + smooth))
