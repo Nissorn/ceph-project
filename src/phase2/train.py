@@ -10,7 +10,8 @@ import torch.nn as nn
 from torch.utils.data import DataLoader
 from tqdm import tqdm
 
-from src.phase2.dataset import CephalometricDataset, get_kfold_splits
+from src.phase2.dataset import CephalometricDataset
+from src.data.splits import build_splits
 from src.phase2.heatmap import encode_heatmaps, decode_heatmaps
 from src.phase2.loss import AdaptiveWingLoss, EUPELoss
 from src.phase2.metrics import radial_error, compute_all_metrics
@@ -282,7 +283,18 @@ def run_kfold_training(
     )
     val_transform = build_val_transform()
 
-    splits = get_kfold_splits(records, n_folds=n_folds)
+    pid_to_iids: dict[str, list[str]] = {}
+    for r in records:
+        pid_to_iids.setdefault(r["patient_id"], []).append(r["image_id"])
+
+    splits_data = build_splits(records, n_folds=n_folds)
+    splits = [
+        (
+            [iid for pid in fold["train"] for iid in pid_to_iids.get(pid, [])],
+            [iid for pid in fold["val"] for iid in pid_to_iids.get(pid, [])],
+        )
+        for fold in splits_data["folds"]
+    ]
     if debug:
         splits = splits[:1]
 
@@ -454,168 +466,4 @@ def run_kfold_training(
         keypoint_names=kp_names,
     )
     metrics["fold_metrics"] = fold_metrics
-    return metrics
-    """Run full Leave-One-Patient-Out cross validation with proper training schedule.
-
-    Key improvements over v1:
-    - Backbone freezing for first N epochs (warmup) + lower LR for backbone
-    - Cosine annealing scheduler
-    - Best-model checkpointing per fold (save best, not last)
-    - Evaluate every 10 epochs + at final epoch
-    - Pretrained weights for ALL folds (not just fold 0)
-    """
-    cfg = load_config(config_path)
-
-    import json
-    import pandas as pd
-
-    with open(cfg["data"]["landmarks_json"]) as f:
-        landmarks_data = json.load(f)
-    records = [r for r in landmarks_data["images"] if r.get("has_landmarks")]
-
-    if max_images is not None:
-        records = records[:max_images]
-
-    if not records:
-        print("WARNING: No annotated images found. Waiting for landmark annotations from Dr.")
-        return {"mre_mean_mm": None, "mre_std_mm": None, "per_landmark_mre": {}, "note": "no_data"}
-
-    cal_df = pd.read_csv(cfg["data"]["calibration_csv"]).set_index("image_id")
-    calibration_lookup = cal_df["mm_per_pixel"].to_dict()
-
-    device = torch.device(cfg["training"]["device"])
-    heatmap_size = tuple(cfg["model"]["heatmap_size"])
-    input_size = tuple(cfg["model"]["input_size"])
-    total_epochs = cfg["training"].get("epochs", 300)
-    if debug:
-        total_epochs = 1
-    lr = cfg["training"]["lr"]
-    batch_size = cfg["training"]["batch_size"]
-
-    warmup_epochs = cfg["training"].get("warmup_epochs", 10)
-    freeze_backbone = cfg["training"].get("freeze_backbone", False)
-
-    splits = get_lopo_splits(records)
-    if debug:
-        splits = splits[:1]
-    all_fold_errors = []
-
-    for fold_idx, (train_ids, test_ids) in enumerate(splits):
-        from src.phase2.augmentation import build_train_transform, build_val_transform
-        aug_cfg = cfg["augmentation"]
-        train_transform = build_train_transform(
-            rotation_limit=aug_cfg["rotation_limit"],
-            zoom_limit=aug_cfg["zoom_limit"],
-            brightness_limit=aug_cfg["brightness_limit"],
-            contrast_limit=aug_cfg["contrast_limit"],
-            clahe=aug_cfg["clahe"],
-            horizontal_flip=False,
-        )
-
-        train_ds = CephalometricDataset(
-            records, cfg["data"]["image_dir"], input_size, train_transform, image_ids=train_ids
-        )
-        test_ds = CephalometricDataset(
-            records, cfg["data"]["image_dir"], input_size, build_val_transform(), image_ids=test_ids
-        )
-
-        train_loader = DataLoader(
-            train_ds, batch_size=batch_size, shuffle=True, num_workers=0
-        )
-        test_loader = DataLoader(test_ds, batch_size=1, shuffle=False, num_workers=0)
-
-        # Always pretrained=True — every fold gets fresh pretrained init
-        model = CephalometricModel(
-            num_keypoints=cfg["keypoints"]["num_keypoints"],
-            pretrained=True,
-        ).to(device)
-
-        # Phase 1: freeze backbone, train head only
-        if freeze_backbone:
-            for param in model.backbone.parameters():
-                param.requires_grad = False
-
-        head_params = list(model.head.parameters())
-        backbone_params = list(model.backbone.parameters())
-
-        if freeze_backbone:
-            optimizer = torch.optim.AdamW(head_params, lr=lr, weight_decay=cfg["training"]["weight_decay"])
-            T_max = total_epochs - warmup_epochs
-            scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=T_max, eta_min=lr * 0.01)
-        else:
-            optimizer = torch.optim.AdamW(
-                [{"params": head_params, "lr": lr}, {"params": backbone_params, "lr": lr * 0.1}],
-                weight_decay=cfg["training"]["weight_decay"],
-            )
-            scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
-                optimizer, T_max=total_epochs, eta_min=lr * 0.001
-            )
-
-        best_mre = float("inf")
-        best_model_state = None
-        phase = 1
-
-        for epoch in range(total_epochs):
-            # Phase 2: unfreeze backbone after warmup
-            if freeze_backbone and epoch == warmup_epochs and phase == 1:
-                for param in model.backbone.parameters():
-                    param.requires_grad = True
-                optimizer = torch.optim.AdamW(
-                    [{"params": model.head.parameters(), "lr": lr * 0.5},
-                     {"params": model.backbone.parameters(), "lr": lr * 0.1}],
-                    weight_decay=cfg["training"]["weight_decay"],
-                )
-                T_max = total_epochs - warmup_epochs
-                scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
-                    optimizer, T_max=T_max, eta_min=lr * 0.001
-                )
-                phase = 2
-                print(f"  [Fold {fold_idx+1}] Backbone unfrozen at epoch {epoch+1}, LR head={lr*0.5:.6f}, backbone={lr*0.1:.6f}")
-
-            # Extract landmark-specific sigma map if defined in config
-            sigma_map = cfg["model"].get("landmark_sigmas")
-            if sigma_map is not None:
-                # Convert to numpy inside train_one_epoch where np is in scope
-                print(f"  [Adaptive sigma] Using landmark-specific sigmas: {dict(zip(cfg['keypoints']['names'], sigma_map))}")
-
-            train_loss = train_one_epoch(
-                model, train_loader, optimizer, device,
-                heatmap_size, cfg["model"]["sigma"], input_size,
-                sigma_map=sigma_map,
-            )
-            scheduler.step()
-
-            # Evaluate every 10 epochs + at final epoch
-            if (epoch + 1) % 10 == 0 or epoch == total_epochs - 1:
-                fold_errors_soft, fold_errors_argmax, fold_coords, fold_gt = evaluate(model, test_loader, device, heatmap_size, input_size, calibration_lookup)
-                mre = compute_mean_mre(fold_errors_soft)
-                mre_argmax = compute_mean_mre(fold_errors_argmax)
-                current_lr = optimizer.param_groups[0]["lr"]
-                # Use argmax MRE for model selection (same reason as training early stopping)
-                if mre_argmax < best_mre:
-                    best_mre = mre_argmax
-                    best_model_state = {k: v.cpu().clone() for k, v in model.state_dict().items()}
-                    marker = " *BEST*"
-                else:
-                    marker = ""
-                print(f"  [Fold {fold_idx+1}] Epoch {epoch+1}/{total_epochs} — loss: {train_loss:.4f}, MRE: {mre:.2f}mm, MRE_argmax: {mre_argmax:.2f}mm, best: {best_mre:.2f}mm, LR: {current_lr:.6f}{marker}")
-
-        # Restore best model for this fold
-        if best_model_state is not None:
-            model.load_state_dict(best_model_state)
-            model.to(device)
-
-        # Final evaluation with best model
-        fold_errors = evaluate(model, test_loader, device, heatmap_size, input_size, calibration_lookup)
-        all_fold_errors.extend(fold_errors)
-
-        patient_id = test_ids[0].rsplit("_", 1)[0]
-        print(f"Fold {fold_idx + 1}/{len(splits)} — patient {patient_id} — final MRE: {best_mre:.2f}mm")
-
-    kp_names = cfg["keypoints"]["names"]
-    metrics = compute_all_metrics(
-        all_fold_errors,
-        sdr_thresholds=cfg["evaluation"]["sdr_thresholds_mm"],
-        keypoint_names=kp_names,
-    )
     return metrics

@@ -33,7 +33,7 @@ sys.path.insert(0, str(ROOT))
 
 from src.phase2.model import CephalometricModel, NUM_KEYPOINTS
 from src.phase2.heatmap import decode_heatmaps
-from src.phase2.dataset import CephalometricDataset, get_kfold_splits
+from src.phase2.dataset import CephalometricDataset
 
 KEYPOINT_NAMES = [
     "Upper_tip", "Upper_apex", "Labial_midroot", "Labatal_crest",

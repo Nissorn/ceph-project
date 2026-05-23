@@ -26,8 +26,13 @@ keypoints:
   calibration_mm: 30.0
 
 model:
+  # architecture: "hrnet_w32" (default) | "hrnet_w18" (fallback-c: capacity reduction)
   architecture: "hrnet_w32"
-  pretrained: "coco"
+  # pretrained_source: "coco" (default) | "ceph_miccai2015" | "ceph_cldetection2023" | "custom"
+  # Pivot to ceph_* if v6 MRE > 4mm (contingency-b: domain-pretrained weights)
+  pretrained_source: "coco"
+  # Path to checkpoint file. Required when pretrained_source is "custom" or ceph_*.
+  pretrained_checkpoint: null
   input_size: [512, 512]
   heatmap_size: [256, 256]
   sigma: 3.0
@@ -73,6 +78,15 @@ phase3:
     - "Root_torque"
     - "Extrusion"
     - "Intrusion"
+
+phase2c:
+  backbone_unfreeze_epoch: 20
+  stage2_lr: 0.00001
+  inject_training_noise: false
+  min_class_support: 5  # Classes with fewer positives are flagged "insufficient_data" and excluded from pos_weight + AUC
+  # Calibrate noise_sigma_pixels to actual Phase 2 HRNet MRE once v6 benchmarks are available.
+  # At 0.0984 mm/px, 15 px ≈ 1.5 mm which approximates expected MRE for a small-dataset HRNet.
+  noise_sigma_pixels: 15.0
 
 evaluation:
   sdr_thresholds_mm: [2.0, 2.5, 3.0, 4.0]

@@ -107,6 +107,11 @@ The `.venv` at `ceph-project/.venv` does not have `pip` pre-installed. Bootstrap
 - Dr. annotation: need 20+ skeleton annotations before meaningful training
 - Phase 3 thresholds: tipping_threshold_deg and threshold_mm still null (pending Dr.)
 
+## Annotation priority (LOCKED — single annotator)
+⛔ T1-only image annotations are FROZEN until all 104 paired T1+T2 images are fully annotated.
+Completing the 104 paired set is the ONLY path to unlock Phase 3 Superimposition (core clinical requirement).
+The 278 T1-only images are out of scope for annotation until paired set is 100% complete.
+
 ## Known bugs remaining
 - None. All bugs from audit logged in FAILURES.md and fixed.
 

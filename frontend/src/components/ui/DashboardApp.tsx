@@ -160,37 +160,43 @@ export default function DashboardApp() {
           }))
         : undefined;
 
-      // Safely parse and cleanly format numeric metrics to prevent excessive float layouts
-      const rawAngle = payload.metrics?.u1_pp_angle_deg ?? 112.5;
+      // ── Phase 3: Biomechanical Constraints ───────────────────────────────────
+      const bc = payload.biomechanical_constraints ?? payload.metrics ?? {};
+      const rawAngle = bc.u1_pp_angle_deg ?? payload.metrics?.u1_pp_angle_deg ?? 112.5;
       const u1_pp_angle = typeof rawAngle === 'number' && !isNaN(rawAngle) ? Number(rawAngle.toFixed(1)) : 112.5;
-      const angle_zone = payload.metrics?.angle_zone ?? null;
-      const root_apex_position = payload.metrics?.root_apex_position ?? null;
+      const angle_zone = bc.angle_zone ?? payload.metrics?.angle_zone ?? null;
+      const root_apex_position = bc.root_apex_position ?? payload.metrics?.root_apex_position ?? null;
 
-      const rawMaxThick = payload.bone_thickness?.labial_min_mm ?? payload.maxillary?.bone_thickness_mm ?? 0;
-      const maxillary_thickness = typeof rawMaxThick === 'number' && !isNaN(rawMaxThick) ? Number(rawMaxThick.toFixed(2)) : 0;
+      const rawLbDist = bc.lb_apex_dist_mm ?? payload.bone_thickness?.labial_min_mm ?? payload.maxillary?.bone_thickness_mm ?? 0;
+      const lb_apex_dist = typeof rawLbDist === 'number' && !isNaN(rawLbDist) ? Number(rawLbDist.toFixed(2)) : 0;
 
-      const rawMandThick = payload.bone_thickness?.mandibular_min_mm ?? payload.mandibular?.bone_thickness_mm ?? 0;
-      const mandibular_thickness = typeof rawMandThick === 'number' && !isNaN(rawMandThick) ? Number(rawMandThick.toFixed(2)) : 0;
+      const rawPbDist = bc.pb_apex_dist_mm ?? payload.bone_thickness?.palatal_min_mm ?? payload.mandibular?.bone_thickness_mm ?? 0;
+      const pb_apex_dist = typeof rawPbDist === 'number' && !isNaN(rawPbDist) ? Number(rawPbDist.toFixed(2)) : 0;
 
-      // Robust status classifications tailored to precise clinical parameters
-      // angle_zone: Retroclined (<105) and Proclined (>115) are both clinical warnings
       const u1_pp_status = angle_zone === 'Retroclined' || angle_zone === 'Proclined' ? 'warning' : 'normal';
-      const maxillary_status = maxillary_thickness < 2.0 ? 'critical' : maxillary_thickness < 2.5 ? 'warning' : 'normal';
-      const mandibular_status = mandibular_thickness < 2.0 ? 'critical' : mandibular_thickness < 2.5 ? 'warning' : 'normal';
-      // Root apex position: Palatal or Labial is elevated risk; Midway is normal
+      const lb_status = lb_apex_dist < 2.0 ? 'critical' : lb_apex_dist < 2.5 ? 'warning' : 'normal';
+      const pb_status = pb_apex_dist < 2.0 ? 'critical' : pb_apex_dist < 2.5 ? 'warning' : 'normal';
       const root_apex_status = root_apex_position === 'Midway' ? 'normal' : 'warning';
 
+      const preferred_biomechanics = bc.preferred_biomechanics ?? payload.classification?.preferred_biomechanics ?? null;
+      const biomechanics_to_avoid  = bc.biomechanics_to_avoid  ?? payload.classification?.biomechanics_to_avoid  ?? null;
+      const clinical_implication   = bc.clinical_implication   ?? payload.interpretation ?? payload.summary ?? null;
+
+      // ── Phase 2c: AI Treatment Recommendation ────────────────────────────────
+      const tr = payload.treatment_recommendation ?? null;
+
       const normalizedResults = {
-        u1_pp_angle,
-        u1_pp_status,
-        angle_zone,
-        root_apex_position,
-        root_apex_status,
-        maxillary_thickness,
-        maxillary_status,
-        mandibular_thickness,
-        mandibular_status,
-        interpretation: payload.classification?.interpretation || payload.interpretation || payload.summary || 'Analysis completed successfully. Review extracted biomechanical structures below.',
+        // Phase 3 — biomechanical state
+        u1_pp_angle, u1_pp_status, angle_zone,
+        root_apex_position, root_apex_status,
+        lb_apex_dist, lb_status,
+        pb_apex_dist, pb_status,
+        preferred_biomechanics,
+        biomechanics_to_avoid,
+        clinical_implication,
+        // Phase 2c — treatment recommendation
+        treatment_recommendation: tr,
+        // Canvas overlays
         annotations: { keypoints: apiKeypoints, polygons: apiPolygons },
         lines_3_level: payload.bone_thickness?.lines_3_level ?? null,
       };
@@ -348,46 +354,103 @@ export default function DashboardApp() {
 
           {results && !isLoading && (
             <div className="flex flex-col gap-5 animate-fade-in">
+
+              {/* ── Section 1: Biomechanical Constraints & Safety Alert ──────── */}
+              <div className="border-l-2 border-amber-400/70 pl-3">
+                <p className="text-[10px] font-bold uppercase tracking-widest text-amber-600/90">
+                  Biomechanical Constraints &amp; Safety Alert
+                </p>
+                <p className="text-[10px] text-slate-400 mt-0.5">Phase 3 — Current state (Zhang et al. 2021)</p>
+              </div>
+
               <MetricCard
                 title="U1-PP Angle"
                 value={results.u1_pp_angle}
-                subtitle={results?.angle_zone ? `° — ${results.angle_zone}` : '° Degrees'}
-                status={
-                  results?.angle_zone === 'Retroclined' ||
-                  results?.angle_zone === 'Proclined'
-                    ? 'warning'
-                    : 'normal'
-                }
+                subtitle={results.angle_zone ? `° — ${results.angle_zone}` : '° Degrees'}
+                status={results.u1_pp_status}
               />
               <MetricCard
                 title="Root Apex Position"
-                value={results?.root_apex_position ?? '—'}
+                value={results.root_apex_position ?? '—'}
                 subtitle=""
-                status={results?.root_apex_position === 'Midway' ? 'normal' : 'warning'}
+                status={results.root_apex_status}
               />
-              <MetricCard 
-                title="Maxillary Bone" 
-                value={results.maxillary_thickness} 
-                subtitle="mm" 
-                status={results.maxillary_status} 
+              <MetricCard
+                title="Labial Bone Clearance"
+                value={results.lb_apex_dist}
+                subtitle="mm  — LB to apex"
+                status={results.lb_status}
               />
-              <MetricCard 
-                title="Mandibular Bone" 
-                value={results.mandibular_thickness} 
-                subtitle="mm" 
-                status={results.mandibular_status} 
+              <MetricCard
+                title="Palatal Bone Clearance"
+                value={results.pb_apex_dist}
+                subtitle="mm  — PB to apex"
+                status={results.pb_status}
               />
-              <div className="mt-2 p-5 bg-singapodent-primary/5 border border-singapodent-primary/15 rounded-xl overflow-hidden shadow-sm">
-                 <h4 className="text-xs font-semibold uppercase text-singapodent-primary mb-3 tracking-wider flex items-center gap-2">
-                   <svg className="w-4 h-4 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
-                   </svg>
-                   Clinical Interpretation
-                 </h4>
-                 <p className="text-sm text-slate-700 leading-relaxed font-normal">
-                   {results.interpretation}
-                 </p>
+
+              {/* Phase 3 clinical text block */}
+              <div className="p-4 bg-amber-50 border border-amber-200/70 rounded-xl shadow-sm space-y-2.5">
+                {results.preferred_biomechanics && (
+                  <div>
+                    <p className="text-[10px] font-bold uppercase tracking-wider text-emerald-700 mb-0.5">Preferred</p>
+                    <p className="text-sm text-slate-700 leading-relaxed">{results.preferred_biomechanics}</p>
+                  </div>
+                )}
+                {results.biomechanics_to_avoid && (
+                  <div>
+                    <p className="text-[10px] font-bold uppercase tracking-wider text-red-600 mb-0.5">Avoid</p>
+                    <p className="text-sm text-slate-700 leading-relaxed">{results.biomechanics_to_avoid}</p>
+                  </div>
+                )}
+                {results.clinical_implication && (
+                  <div>
+                    <p className="text-[10px] font-bold uppercase tracking-wider text-slate-500 mb-0.5">Implication</p>
+                    <p className="text-sm text-slate-700 leading-relaxed">{results.clinical_implication}</p>
+                  </div>
+                )}
               </div>
+
+              {/* ── Section 2: AI-Assisted Treatment Recommendation ─────────── */}
+              <div className="border-l-2 border-singapodent-accent/70 pl-3 mt-2">
+                <p className="text-[10px] font-bold uppercase tracking-widest text-singapodent-accent/90">
+                  AI-Assisted Treatment Recommendation
+                </p>
+                <p className="text-[10px] text-slate-400 mt-0.5">Phase 2c — Forward-looking plan (Fusion model)</p>
+              </div>
+
+              {results.treatment_recommendation?.model_status === 'active' ? (
+                <div className="p-4 bg-singapodent-primary/5 border border-singapodent-primary/15 rounded-xl shadow-sm space-y-2.5">
+                  <div className="flex items-center justify-between">
+                    <span className="text-sm font-semibold text-slate-800">
+                      {results.treatment_recommendation.recommended_class ?? '—'}
+                    </span>
+                    {results.treatment_recommendation.confidence != null && (
+                      <span className={`text-xs font-bold px-2 py-0.5 rounded-full ${
+                        results.treatment_recommendation.confidence >= 0.75
+                          ? 'bg-emerald-100 text-emerald-700'
+                          : results.treatment_recommendation.confidence >= 0.55
+                          ? 'bg-amber-100 text-amber-700'
+                          : 'bg-red-100 text-red-600'
+                      }`}>
+                        {(results.treatment_recommendation.confidence * 100).toFixed(0)}% conf.
+                      </span>
+                    )}
+                  </div>
+                  {results.treatment_recommendation.insufficient_classes?.length ? (
+                    <p className="text-[11px] text-amber-600">
+                      Insufficient data for: {results.treatment_recommendation.insufficient_classes.join(', ')}
+                    </p>
+                  ) : null}
+                </div>
+              ) : (
+                <div className="p-4 bg-slate-50 border border-dashed border-slate-300 rounded-xl text-center">
+                  <p className="text-xs font-medium text-slate-400 uppercase tracking-wide">Model Training Pending</p>
+                  <p className="text-[11px] text-slate-400 mt-1">
+                    Recommendation will activate once HRNet + Phase 2c training completes.
+                  </p>
+                </div>
+              )}
+
             </div>
           )}
         </div>

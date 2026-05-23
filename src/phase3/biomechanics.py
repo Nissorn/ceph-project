@@ -22,7 +22,7 @@ Usage:
 
 import math
 import numpy as np
-from typing import Dict, Optional, Tuple
+from typing import Dict, Optional, Tuple, TypedDict
 
 
 # ---------------------------------------------------------------------------
@@ -55,6 +55,20 @@ REQUIRED_METRIC_KEYS = [
     "lb_apex_dist_mm",
     "pb_apex_dist_mm",
 ]
+
+
+class MetricsResult(TypedDict):
+    """Typed return contract for calculate_metrics().
+
+    Scalar fields (float) are clinical measurements in mm or degrees.
+    Coordinate fields (Tuple[float, float]) are pixel-space points for
+    visualisation only — never feed them into mm-based comparisons.
+    """
+    u1_pp_angle_deg: float                  # U1-to-palatal-plane angle (degrees)
+    lb_apex_dist_mm: float                  # labial bone lateral clearance (mm)
+    pb_apex_dist_mm: float                  # palatal bone lateral clearance (mm)
+    lb_foot_px: Tuple[float, float]         # foot of LB perpendicular on tooth axis (pixels)
+    pb_foot_px: Tuple[float, float]         # foot of PB perpendicular on tooth axis (pixels)
 
 REQUIRED_CLASSIFICATION_KEYS = [
     "Root apex position",
@@ -193,11 +207,68 @@ def _euclidean_px(p1: Tuple[float, float], p2: Tuple[float, float]) -> float:
     return math.sqrt(dx * dx + dy * dy)
 
 
+def _perp_dist_to_tooth_axis(
+    point: Tuple[float, float],
+    apex: Tuple[float, float],
+    tip: Tuple[float, float],
+) -> Tuple[float, Tuple[float, float]]:
+    """Geometric projection correction for bone landmark plotting variance.
+
+    The tooth axis is defined by the vector from Upper_apex → Upper_tip.
+    Human annotators (and HRNet predictions) rarely place LB/PB at exactly
+    90° to this axis. This function projects `point` perpendicularly onto
+    the tooth axis line, eliminating the along-axis component of any plotting
+    error so that the returned distance is the true lateral bone clearance.
+
+    Parameters
+    ----------
+    point : (x, y) pixel coords of the bone landmark (LB or PB).
+    apex  : (x, y) pixel coords of Upper_apex.
+    tip   : (x, y) pixel coords of Upper_tip.
+
+    Returns
+    -------
+    perp_dist_px : float
+        Perpendicular (lateral) distance from `point` to the tooth axis line.
+    foot : (x, y)
+        The foot of the perpendicular on the tooth axis — can be used for
+        visualisation of the corrected measurement line.
+    """
+    ax = tip[0] - apex[0]
+    ay = tip[1] - apex[1]
+    axis_len = math.sqrt(ax * ax + ay * ay)
+    if axis_len == 0.0:
+        raise ValueError(
+            "Tooth axis has zero length: Upper_tip == Upper_apex. "
+            "Check landmark annotations."
+        )
+    # Unit vector along tooth axis
+    ux, uy = ax / axis_len, ay / axis_len
+
+    # Scalar projection of (point - apex) onto the tooth axis
+    px, py = point[0] - apex[0], point[1] - apex[1]
+    t = px * ux + py * uy
+
+    # Foot of perpendicular on the tooth axis line
+    foot: Tuple[float, float] = (apex[0] + t * ux, apex[1] + t * uy)
+
+    # Perpendicular distance (true lateral clearance)
+    perp_dist_px = math.sqrt(
+        (point[0] - foot[0]) ** 2 + (point[1] - foot[1]) ** 2
+    )
+    return perp_dist_px, foot
+
+
 def calculate_metrics(
     landmarks: Dict[str, Tuple[float, float]],
     mm_per_pixel: float = 0.0984,
-) -> Dict[str, float]:
+) -> MetricsResult:
     """Calculate biomechanical metrics from landmark pixel coordinates.
+
+    LB and PB distances use geometric projection correction: each landmark is
+    projected perpendicularly onto the tooth axis (Upper_apex → Upper_tip) so
+    that human plotting variance and HRNet prediction jitter along the axis do
+    not contaminate the lateral bone-clearance measurement.
 
     Parameters
     ----------
@@ -213,8 +284,10 @@ def calculate_metrics(
     -------
     dict with keys:
         u1_pp_angle_deg  -- U1-to-palatal-plane angle in degrees
-        lb_apex_dist_mm  -- distance from LB to root apex in mm
-        pb_apex_dist_mm  -- distance from PB to root apex in mm
+        lb_apex_dist_mm  -- perpendicular distance from LB to tooth axis (mm)
+        pb_apex_dist_mm  -- perpendicular distance from PB to tooth axis (mm)
+        lb_foot_px       -- (x, y) foot of LB perpendicular on tooth axis
+        pb_foot_px       -- (x, y) foot of PB perpendicular on tooth axis
     """
     _required = ("Upper_tip", "Upper_apex", "ANS", "PNS", "LB", "PB")
     missing = [k for k in _required if k not in landmarks]
@@ -246,17 +319,21 @@ def calculate_metrics(
     # If the vector math yields an acute angle, we take the supplementary angle.
     u1_pp_angle_deg = 180.0 - raw_angle if raw_angle < 90.0 else raw_angle
 
-    # ── LB-Apex and PB-Apex distances ────────────────────────────────────────
-    lb_apex_px = _euclidean_px(lb, apex)
-    pb_apex_px = _euclidean_px(pb, apex)
+    # ── LB / PB distances — projection-corrected ─────────────────────────────
+    # Project each bone landmark perpendicularly onto the tooth axis to obtain
+    # the true lateral clearance, eliminating plotting angle variance.
+    lb_perp_px, lb_foot = _perp_dist_to_tooth_axis(lb, apex, tip)
+    pb_perp_px, pb_foot = _perp_dist_to_tooth_axis(pb, apex, tip)
 
-    lb_apex_mm = lb_apex_px * mm_per_pixel
-    pb_apex_mm = pb_apex_px * mm_per_pixel
+    lb_apex_mm = lb_perp_px * mm_per_pixel
+    pb_apex_mm = pb_perp_px * mm_per_pixel
 
     return {
         "u1_pp_angle_deg": u1_pp_angle_deg,
         "lb_apex_dist_mm": lb_apex_mm,
         "pb_apex_dist_mm": pb_apex_mm,
+        "lb_foot_px":      lb_foot,
+        "pb_foot_px":      pb_foot,
     }
 
 
