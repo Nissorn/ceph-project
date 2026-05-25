@@ -290,7 +290,11 @@ def _snap_crest_points(coords: np.ndarray, masks: list[np.ndarray]) -> tuple[np.
             dx = new_pt[0] - pt_raw[0]
             dy = new_pt[1] - pt_raw[1]
             dist = math.sqrt(dx**2 + dy**2)
-            diag[name] = {"dx": round(dx, 2), "dy": round(dy, 2), "dist_px": round(dist, 2)}
+            diag[name] = {
+                "dx": float(round(float(dx), 2)),
+                "dy": float(round(float(dy), 2)),
+                "dist_px": float(round(float(dist), 2)),
+            }
         else:
             diag[name] = {"dx": 0.0, "dy": 0.0, "dist_px": 0.0, "note": "no_contour"}
 
@@ -314,14 +318,22 @@ def _snap_midroot_points(coords: np.ndarray, masks: list[np.ndarray]) -> tuple[n
     new_pt = pts[pts[:, 0].argmax()]
     snapped[2] = new_pt
     dx = new_pt[0] - pt_raw[0]; dy = new_pt[1] - pt_raw[1]
-    diag["Labial_midroot"] = {"dx": round(dx, 2), "dy": round(dy, 2), "dist_px": round(math.sqrt(dx**2+dy**2), 2)}
+    diag["Labial_midroot"] = {
+        "dx": float(round(float(dx), 2)),
+        "dy": float(round(float(dy), 2)),
+        "dist_px": float(round(float(math.sqrt(dx**2 + dy**2)), 2)),
+    }
 
     # Index 4: min x (leftmost = palatal surface)
     pt_raw = coords[4]
     new_pt = pts[pts[:, 0].argmin()]
     snapped[4] = new_pt
     dx = new_pt[0] - pt_raw[0]; dy = new_pt[1] - pt_raw[1]
-    diag["Palatal_midroot"] = {"dx": round(dx, 2), "dy": round(dy, 2), "dist_px": round(math.sqrt(dx**2+dy**2), 2)}
+    diag["Palatal_midroot"] = {
+        "dx": float(round(float(dx), 2)),
+        "dy": float(round(float(dy), 2)),
+        "dist_px": float(round(float(math.sqrt(dx**2 + dy**2)), 2)),
+    }
 
     return snapped, diag
 
@@ -337,7 +349,11 @@ def _snap_ans_pns(coords: np.ndarray, masks: list[np.ndarray]) -> tuple[np.ndarr
             new_pt = _project_point_onto_contour(pt_raw, palatal_contour)
             snapped[idx] = new_pt
             dx = new_pt[0] - pt_raw[0]; dy = new_pt[1] - pt_raw[1]
-            diag[name] = {"dx": round(dx, 2), "dy": round(dy, 2), "dist_px": round(math.sqrt(dx**2+dy**2), 2)}
+            diag[name] = {
+                "dx": float(round(float(dx), 2)),
+                "dy": float(round(float(dy), 2)),
+                "dist_px": float(round(float(math.sqrt(dx**2 + dy**2)), 2)),
+            }
         else:
             diag[name] = {"dx": 0.0, "dy": 0.0, "dist_px": 0.0, "note": "no_contour"}
 
@@ -623,14 +639,14 @@ class AnalysisService:
             "snapping": snapping_diag,
             "mask_overlap_diagnostic": mask_diag,
             "metrics": {
-                "u1_pp_angle_deg": u1_pp_angle_deg,
+                "u1_pp_angle_deg": float(u1_pp_angle_deg),
             },
             # scale factors exposed for frontend verification
             "_debug": {
-                "orig_width": orig_w,
-                "orig_height": orig_h,
-                "scale_x": round(scale_x, 6),
-                "scale_y": round(scale_y, 6),
+                "orig_width": int(orig_w),
+                "orig_height": int(orig_h),
+                "scale_x": float(round(scale_x, 6)),
+                "scale_y": float(round(scale_y, 6)),
                 "device": str(self._device),
             },
         }
