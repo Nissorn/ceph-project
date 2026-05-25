@@ -5,6 +5,8 @@ services:
       dockerfile: Dockerfile
     ports:
       - "8000:8000"
+    environment:
+      - PYTHONPATH=/app:/app/backend
     volumes:
       - ./backend:/app
       - ./data:/app/data
