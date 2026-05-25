@@ -33,7 +33,15 @@ import torch.nn.functional as F
 from scipy.spatial.distance import euclidean
 
 # ── project root ──────────────────────────────────────────────────────────────
-ROOT = Path(__file__).resolve().parent.parent.parent.parent
+# Inside Docker: WORKDIR=/app, volume ./backend/app:/app/app maps to /app/app/.
+# With ./data:/app/data and ./outputs:/app/outputs mounts, use parents[2]:
+#   /app/app/services/analysis_service.py
+#     parents[0] = /app/app/services
+#     parents[1] = /app/app
+#     parents[2] = /app           ← WORKDIR = correct ROOT
+#     parents[3] = /             ← WRONG (goes above WORKDIR to host fs root)
+# On Mac dev machine (no Docker), this resolves to the repo root the same way.
+ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 warnings.filterwarnings("ignore")
 
@@ -406,40 +414,68 @@ class AnalysisService:
     # ------------------------------------------------------------------ #
 
     def _load_models(self):
-        """Load both production weights into memory on service init."""
+        """Load both production weights into memory on service init.
+        
+        If physical weights are absent (e.g. first deployment before training),
+        the service starts in degraded mode with _ready=False and a clear
+        structured warning — no 500 crash, no opaque error.
+        """
         print("[AnalysisService] Warming up — loading production weights ...")
 
         # ── Landmark model (HRNet-W32) ────────────────────────────────────
         landmark_ckpt_path = ROOT / "data" / "processed" / "checkpoints" / "fold1_best.pth"
         if not landmark_ckpt_path.exists():
-            raise FileNotFoundError(f"Landmark checkpoint not found: {landmark_ckpt_path}")
-
-        lm = _build_landmark_model()
-        ckpt = torch.load(landmark_ckpt_path, map_location=self._device, weights_only=False)
-        state = {
-            k: v for k, v in ckpt.get("model_state_dict", ckpt).items()
-            if "uncertainty" not in k
-        }
-        lm.load_state_dict(state, strict=False)
-        lm = lm.to(self._device)
-        lm.eval()
-        self._landmark_model = lm
-        print(f"[AnalysisService] Landmark model loaded: {landmark_ckpt_path.name}")
+            print(
+                "[AnalysisService] WARNING: Landmark checkpoint not found: "
+                f"{landmark_ckpt_path}\n"
+                "  Training not yet run or checkpoint not mounted.\n"
+                "  Service starting in DEGRADED mode (landmark detection unavailable).\n"
+                "  Expected path inside container: /app/data/processed/checkpoints/fold1_best.pth\n"
+                "  Verify: docker-compose.yml has './data:/app/data' volume mount."
+            )
+            self._landmark_model = None
+        else:
+            lm = _build_landmark_model()
+            ckpt = torch.load(landmark_ckpt_path, map_location=self._device, weights_only=False)
+            state = {
+                k: v for k, v in ckpt.get("model_state_dict", ckpt).items()
+                if "uncertainty" not in k
+            }
+            lm.load_state_dict(state, strict=False)
+            lm = lm.to(self._device)
+            lm.eval()
+            self._landmark_model = lm
+            print(f"[AnalysisService] Landmark model loaded: {landmark_ckpt_path.name}")
 
         # ── Segmentation model (DeepLabV3Plus) ──────────────────────────────
         seg_ckpt_path = ROOT / "models" / "exp0128_DeepLabV3Plus_resnet34_20260524_043501" / "best_model.pt"
         if not seg_ckpt_path.exists():
-            raise FileNotFoundError(f"Segmentation checkpoint not found: {seg_ckpt_path}")
+            print(
+                "[AnalysisService] WARNING: Segmentation checkpoint not found: "
+                f"{seg_ckpt_path}\n"
+                "  Segmentation model unavailable.\n"
+                "  Expected path inside container: /app/models/exp*/best_model.pt\n"
+                "  Verify: docker-compose.yml has './models:/app/models' volume mount."
+            )
+            self._seg_model = None
+        else:
+            sm = _build_segmentation_model(3)
+            seg_state = torch.load(seg_ckpt_path, map_location=self._device, weights_only=False)
+            sm.load_state_dict(seg_state, strict=False)
+            sm = sm.to(self._device)
+            sm.eval()
+            self._seg_model = sm
+            print(f"[AnalysisService] Segmentation model loaded: {seg_ckpt_path.name}")
 
-        sm = _build_segmentation_model(3)
-        seg_state = torch.load(seg_ckpt_path, map_location=self._device, weights_only=False)
-        sm.load_state_dict(seg_state, strict=False)
-        sm = sm.to(self._device)
-        sm.eval()
-        self._seg_model = sm
-        print(f"[AnalysisService] Segmentation model loaded: {seg_ckpt_path.name}")
-        print(f"[AnalysisService] Both models on device: {self._device}")
-        self._ready = True
+        print(f"[AnalysisService] Device: {self._device}")
+
+        # Start degraded if at least one model is missing (not a hard crash)
+        self._ready = self._landmark_model is not None and self._seg_model is not None
+        if not self._ready:
+            print(
+                "[AnalysisService] DEGRADED MODE — one or both models unavailable.\n"
+                "  analyze_image() will return structured error response, not crash."
+            )
 
     # ------------------------------------------------------------------ #
     # Main inference entry point                                        #
@@ -464,7 +500,23 @@ class AnalysisService:
               - metrics (u1_pp_angle_deg)
         """
         if not self._ready:
-            raise RuntimeError("AnalysisService models not loaded — startup failure")
+            return {
+                "status": "degraded",
+                "image_id": None,
+                "error": (
+                    "AnalysisService started in DEGRADED mode: one or both model "
+                    "checkpoints were not found at startup. "
+                    "Landmark detection and/or segmentation are unavailable. "
+                    "Verify that training has completed and docker-compose.yml "
+                    "volume mounts are correctly configured."
+                ),
+                "landmarks": None,
+                "raw_landmarks": None,
+                "segmentation": None,
+                "snapping": None,
+                "mask_overlap_diagnostic": None,
+                "metrics": {"u1_pp_angle_deg": None},
+            }
 
         # ── Step 1: Read native dimensions + preprocess ────────────────────
         tensor_512, orig_h, orig_w = _preprocess_from_bytes(image_bytes, INPUT_SIZE)

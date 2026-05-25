@@ -9,6 +9,9 @@ services:
       - PYTHONPATH=/app:/app/backend
     volumes:
       - ./backend/app:/app/app
+      - ./data:/app/data
+      - ./models:/app/models
+      - ./outputs:/app/outputs
 
   web:
     build:
