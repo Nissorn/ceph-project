@@ -50,6 +50,45 @@ INPUT_SIZE = (512, 512)
 HEATMAP_SIZE = (256, 256)
 NUM_KEYPOINTS = 10
 
+# ── Apple Silicon / Docker emulation stabilization ─────────────────────────────
+# Apple Silicon (M-series) running x86_64 Docker images triggers silent C++
+# core dumps on specific vectorized operations. This is NOT a PyTorch bug but
+# a qemu-user / MPS-FALLBACK interaction. Fixes:
+#   1. torch.set_num_threads(1)        → prevents thread-scheduling crashes
+#   2. Explicit .cpu() on all tensors   → avoids any MPS/FallBack path
+#   3. Explicit .astype(np.uint8)       → OpenCV requires contiguous memory layout
+torch.set_num_threads(1)
+
+# ── dynamic device selection (platform-agnostic, crash-proof) ─────────────────
+# Priority: CUDA ordinals > CUDA available > MPS (Apple Silicon) > CPU
+# This prevents silent segfaults when Docker container inherits host CUDA topology
+# that does not include cuda:1 (e.g. single-GPU Mac Mini M4 / cloud nodes).
+def _get_safe_device() -> torch.device:
+    import platform, os
+    # ── Apple Silicon Docker stabilization ────────────────────────────────────
+    # When Docker runs x86_64 image on Apple Silicon (qemu user mode),
+    # torch.backends.mps.is_available() reports True but MPS operations
+    # silently segfault. Override to CPU to force safe scalar path.
+    # Detect: running inside Docker on ARM host.
+    if sys.platform == "darwin" and platform.machine() == "arm64":
+        # Native Mac Metal — use MPS if available (no emulation, real GPU)
+        if torch.cuda.is_available():
+            device_str = f"cuda:{torch.cuda.current_device()}"
+        elif torch.backends.mps.is_available():
+            device_str = "mps"
+        else:
+            device_str = "cpu"
+    else:
+        # Linux x86_64 Docker / cloud CPU — NEVER use MPS (unavailable on x86)
+        # Force CPU to avoid any qemu emulation crashes.
+        device_str = "cpu"
+    device = torch.device(device_str)
+    print(f"[AnalysisService] Actively deploying weights to device: {device}")
+    return device
+
+_SAFE_DEVICE = _get_safe_device()
+
+# ── constants ────────────────────────────────────────────────────────────────
 KEYPOINT_NAMES = [
     "Upper_tip", "Upper_apex", "Labial_midroot", "Labial_crest",
     "Palatal_midroot", "Palatal_crest", "ANS", "PNS", "LB", "PB",
@@ -58,24 +97,6 @@ KEYPOINT_NAMES = [
 CLASS_UPPER_INCISOR = 0
 CLASS_LABIAL_BONE   = 1
 CLASS_PALATAL_BONE  = 2
-
-# ── dynamic device selection (platform-agnostic, crash-proof) ─────────────────
-# Priority: CUDA ordinals > CUDA available > MPS (Apple Silicon) > CPU
-# This prevents silent segfaults when Docker container inherits host CUDA topology
-# that does not include cuda:1 (e.g. single-GPU Mac Mini M4 / cloud nodes).
-def _get_safe_device() -> torch.device:
-    if torch.cuda.is_available():
-        # Use first available GPU to avoid hardcoded ordinal crashes
-        device_str = f"cuda:{torch.cuda.current_device()}"
-    elif torch.backends.mps.is_available():
-        device_str = "mps"   # Apple Silicon GPU via Metal backend
-    else:
-        device_str = "cpu"
-    device = torch.device(device_str)
-    print(f"[AnalysisService] Actively deploying weights to device: {device}")
-    return device
-
-_SAFE_DEVICE = _get_safe_device()
 
 # ── model builders (mirrors src/phase2/inference.py) ────────────────────────
 
