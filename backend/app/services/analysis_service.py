@@ -51,8 +51,23 @@ CLASS_UPPER_INCISOR = 0
 CLASS_LABIAL_BONE   = 1
 CLASS_PALATAL_BONE  = 2
 
-# Safe device: prefer cuda:1, fall back to cpu to preserve VRAM isolation
-_SAFE_DEVICE = torch.device("cuda:1" if torch.cuda.is_available() else "cpu")
+# ── dynamic device selection (platform-agnostic, crash-proof) ─────────────────
+# Priority: CUDA ordinals > CUDA available > MPS (Apple Silicon) > CPU
+# This prevents silent segfaults when Docker container inherits host CUDA topology
+# that does not include cuda:1 (e.g. single-GPU Mac Mini M4 / cloud nodes).
+def _get_safe_device() -> torch.device:
+    if torch.cuda.is_available():
+        # Use first available GPU to avoid hardcoded ordinal crashes
+        device_str = f"cuda:{torch.cuda.current_device()}"
+    elif torch.backends.mps.is_available():
+        device_str = "mps"   # Apple Silicon GPU via Metal backend
+    else:
+        device_str = "cpu"
+    device = torch.device(device_str)
+    print(f"[AnalysisService] Actively deploying weights to device: {device}")
+    return device
+
+_SAFE_DEVICE = _get_safe_device()
 
 # ── model builders (mirrors src/phase2/inference.py) ────────────────────────
 
