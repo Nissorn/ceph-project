@@ -25,7 +25,7 @@ async def analyze_endpoint(file: UploadFile = File(...)):
 
     # Run the full production pipeline
     try:
-        result = analysis_service.analyze_image(contents)
+        result = analysis_service().analyze_image(contents)
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Analysis pipeline error: {e}")
 

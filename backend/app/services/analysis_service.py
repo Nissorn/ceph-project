@@ -549,5 +549,34 @@ class AnalysisService:
         return result
 
 
-# ── Singleton instance ───────────────────────────────────────────────────────
-analysis_service = AnalysisService()
+# ── Lazy singleton wrapper — prevents crash on container startup ──────────────
+# Model weights may not be mounted yet when the module is first imported.
+# The service is created on first /analyze call, not at import time.
+
+
+class _LazyService:
+    """Lazily-instantiated wrapper that defers AnalysisService() to first use."""
+
+    __slots__ = ("_instance",)
+
+    def __init__(self):
+        self._instance = None
+
+    def get(self) -> "AnalysisService":
+        if self._instance is None:
+            self._instance = AnalysisService()
+        return self._instance
+
+    def __getattr__(self, name: str):
+        return getattr(self.get(), name)
+
+
+_lazy_service = _LazyService()
+
+# Backward-compat: analysis_service acts like the real object
+# but defers __init__ until the first HTTP request actually needs it.
+
+
+def analysis_service() -> "AnalysisService":
+    """Call as a function: analysis_service().analyze_image(...)"""
+    return _lazy_service.get()
