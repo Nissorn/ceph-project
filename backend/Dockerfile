@@ -10,9 +10,13 @@ WORKDIR /app
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt python-multipart opencv-python-headless shapely
 
-# Copy into ./backend/ so the package resolves as backend.app.main
-COPY . ./backend/
+# Copy into /app directly — no double-nesting.
+# Before (COPY . ./backend/): created /app/backend/backend/app/  ← broken
+# After  (COPY . .):          creates /app/app/                 ← correct
+# Volume mount - ./backend:/app then maps host ./backend/ → /app
+# but /app/app/ stays intact because /app/backend (not /app/app) is what gets shadowed.
+COPY . .
 
 EXPOSE 8000
 
-CMD ["uvicorn", "backend.app.main:app", "--host", "0.0.0.0", "--port", "8000"]
+CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]

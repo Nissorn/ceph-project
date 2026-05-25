@@ -1,6 +1,6 @@
 from fastapi import APIRouter, UploadFile, File, HTTPException
-from backend.app.models.schemas import AnalysisResponse
-from backend.app.services.analysis_service import analysis_service
+from app.models.schemas import AnalysisResponse
+from app.services.analysis_service import analysis_service
 
 router = APIRouter()
 

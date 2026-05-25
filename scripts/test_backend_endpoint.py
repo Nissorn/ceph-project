@@ -9,7 +9,7 @@ and validates:
   - Presence of required JSON fields (u1_pp_angle_deg, landmarks, segmentation)
 
 Run locally (NOT inside Docker) from the project root:
-    PYTHONPATH=. python scripts/test_backend_endpoint.py
+    python scripts/test_backend_endpoint.py
 
 Requires checkpoints at:
     data/processed/checkpoints/fold1_best.pth
@@ -18,7 +18,7 @@ Requires checkpoints at:
 
 from __future__ import annotations
 
-import io, sys
+import sys, warnings, io
 from pathlib import Path
 
 import cv2
@@ -27,12 +27,13 @@ from fastapi.testclient import TestClient
 
 # ── project root ──────────────────────────────────────────────────────────────
 ROOT = Path(__file__).resolve().parent.parent
+# Put the backend directory on sys.path so:
+#   "from backend.app.main import app"  →  ROOT/backend/app/main.py
+#   backend/app/main.py does:  "from app.api.v1.endpoints import ..."
+#   → ROOT/backend/app/api/v1/endpoints.py  ✓
+sys.path.insert(0, str(ROOT / "backend"))
 sys.path.insert(0, str(ROOT))
-
-# ── bootstrap the FastAPI app ────────────────────────────────────────────────
-# We import the app factory directly so PYTHONPATH=. lets Python resolve
-# "backend.app.main" as a top-level package.
-from backend.app.main import app          # noqa: E402
+warnings.filterwarnings("ignore")
 
 # ── verify checkpoints exist before starting ──────────────────────────────────
 CKPT_LANDMARK = ROOT / "data" / "processed" / "checkpoints" / "fold1_best.pth"
@@ -44,6 +45,18 @@ if missing:
         print(f"    {p}")
     print("[test_backend_endpoint] The /analyze call will fail at model-loading.")
     print("[test_backend_endpoint] Proceeding anyway to test routing + import resolution.\n")
+
+# ── bootstrap the FastAPI app ────────────────────────────────────────────────
+# Project root (ceph-project/) is on sys.path.  The ./backend/app/ directory
+# resolves as the "backend.app" package.  backend.app.main does:
+#   from app.api.v1.endpoints import ...   (because app/ lives at /app/app/)
+# which is found because ./backend/app/ is named "app" relative to the container
+# root /app.  Locally, ROOT/backend/app/ is named "backend" on disk but the
+# import "backend.app" resolves it correctly.
+#
+# Docker: context=./backend, WORKDIR /app, COPY . ., CMD ["uvicorn", "app.main:app", ...]
+#   → container /app/app/ mirrors local ROOT/backend/app/
+from backend.app.main import app          # noqa: E402
 
 client = TestClient(app)
 
