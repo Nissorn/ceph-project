@@ -1,32 +1,33 @@
-from fastapi import APIRouter, File, UploadFile
+from fastapi import APIRouter, UploadFile, File, HTTPException
 from backend.app.models.schemas import AnalysisResponse
 from backend.app.services.analysis_service import analysis_service
 
 router = APIRouter()
 
+
 @router.post("/analyze", response_model=AnalysisResponse)
 async def analyze_endpoint(file: UploadFile = File(...)):
     """
-    Endpoint for executing cephalometric analysis
+    Upload a cephalogram JPEG/PNG image for full Phase 2A (HRNet-W32)
+    landmark detection + Phase 2B (DeepLabV3Plus) segmentation +
+    geometric snapping pipeline.
+
+    Returns landmarks (10 pts), segmentation polygons, and biomechanical
+    metrics compatible with the Astro + Konva frontend canvas.
     """
-    # We can pass the file bytes or name to the service if needed later.
-    # Process using service
-    # analysis_result = analysis_service.analyze_image({"filename": file.filename})
-    
-    analysis_result = {
-        "metrics": {
-            "u1_pp_angle_deg": 112.5
-        },
-        "bone_thickness": {
-            "labial_min_mm": 2.1,
-            "mandibular_min_mm": 3.4
-        },
-        "classification": {
-            "interpretation": "Reduced maxillary bone thickness detected below the 2.5mm threshold. Patient is at elevated risk for recession during retraction. Biomechanical compensation recommended."
-        }
-    }
-    
-    return AnalysisResponse(
-        status="success",
-        data=analysis_result
-    )
+    # Read the uploaded file into memory
+    try:
+        contents = await file.read()
+        if not contents:
+            raise HTTPException(status_code=400, detail="Empty upload file")
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Failed to read upload: {e}")
+
+    # Run the full production pipeline
+    try:
+        result = analysis_service.analyze_image(contents)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Analysis pipeline error: {e}")
+
+    # Wrap in AnalysisResponse
+    return AnalysisResponse(status=result["status"], data=result)

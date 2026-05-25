@@ -34,7 +34,7 @@ model:
 
 training:
   batch_size: 4
-  epochs: 100          # max epochs; early stopping will terminate sooner if val_mre plateaus
+  epochs: 150         # 150 epochs with partial freeze + differential LR
   lr: 0.001
   weight_decay: 0.001   # heavy L2 regularization to combat overfitting on 92 images
   device: "cuda"       # "cuda" for GPU server, "mps" for Mac
