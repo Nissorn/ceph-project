@@ -77,19 +77,26 @@ export default function DashboardApp() {
         throw new Error('Received malformed response payload from the analysis server.');
       }
 
+      console.log("REAL API PAYLOAD RECEIVED:", data);
       const payload = data?.data || data || {};
-       
+      console.log("UNWRAPPED PAYLOAD:", payload);
+
       // Clinical label order: Upper_tip, Upper_apex, Labial_midroot, Labial_crest,
       // Palatal_midroot, Palatal_crest, ANS, PNS, LB, PB
       const KP_NAMES = [
         'Upper_tip','Upper_apex','Labial_midroot','Labial_crest',
         'Palatal_midroot','Palatal_crest','ANS','PNS','LB','PB',
       ];
-      // Clinical polygon order: Upper_incisor, Labial_bone, Palatal_bone
-      const POLY_NAMES = ['Upper_incisor','Labial_bone','Palatal_bone'];
+      // Backend returns segmentation as keyed dict; matches CephCanvasEditor POLY_PALETTE order
+      const SEG_NAMES = ['Upper_incisor','Labial_bone','Palatal_bone'] as const;
+      const SEG_PALETTE = [
+        { fill: 'rgba(6, 182, 212, 0.15)',  stroke: 'rgba(6, 182, 212, 0.9)'  },
+        { fill: 'rgba(236, 72, 153, 0.15)', stroke: 'rgba(236, 72, 153, 0.9)' },
+        { fill: 'rgba(16, 185, 129, 0.15)', stroke: 'rgba(16, 185, 129, 0.9)' },
+      ];
 
-      const apiKeypoints = Array.isArray(payload.keypoints)
-        ? payload.keypoints.map((kp: any, i: number) => ({
+      const apiKeypoints = Array.isArray(payload.landmarks)
+        ? payload.landmarks.map((kp: any, i: number) => ({
             id:   `kp-${i}`,
             name: KP_NAMES[i] ?? kp?.name ?? `kp-${i}`,
             x:    Number(kp?.x ?? 0),
@@ -97,14 +104,21 @@ export default function DashboardApp() {
           }))
         : undefined;
 
-      const apiPolygons = Array.isArray(payload.polygons)
-        ? payload.polygons.map((poly: any, i: number) => ({
-            id:     `poly-${i}`,
-            name:   POLY_NAMES[i] ?? poly?.name ?? `poly-${i}`,
-            points: Array.isArray(poly?.points) ? poly.points : [],
-            fill:   poly?.fill || 'rgba(59, 130, 246, 0.2)',
-            stroke: poly?.stroke || 'rgba(59, 130, 246, 0.8)',
-          }))
+      // Backend polygon: [[x,y],...] → CephCanvasEditor needs flat [x,y,x,y,...]
+      const apiPolygons = payload.segmentation
+        ? SEG_NAMES.map((name, i) => {
+            const seg = payload.segmentation[name];
+            const flatPoints: number[] = Array.isArray(seg?.polygon)
+              ? (seg.polygon as number[][]).flatMap((pt: number[]) => [pt[0], pt[1]])
+              : [];
+            return {
+              id:     `poly-${i}`,
+              name,
+              points: flatPoints,
+              fill:   SEG_PALETTE[i].fill,
+              stroke: SEG_PALETTE[i].stroke,
+            };
+          })
         : undefined;
 
       // Safely parse and cleanly format numeric metrics to prevent excessive float layouts

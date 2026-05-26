@@ -146,20 +146,9 @@ export default function CephCanvasEditor({
   useEffect(() => {
     if (!img) return;
     const { width: w, height: h } = img;
-    setKeypoints(
-      initialKeypoints ??
-        KP_DEFS.map((d, i) => ({ id: `kp-${i}`, name: d.name, x: d.fx * w, y: d.fy * h }))
-    );
-    setPolygons(
-      initialPolygons ??
-        POLY_DEFS.map((d, i) => ({
-          id:     `poly-${i}`,
-          name:   d.name,
-          points: fracsToImg(d.fracs, w, h),
-          fill:   POLY_PALETTE[i % POLY_PALETTE.length].fill,
-          stroke: POLY_PALETTE[i % POLY_PALETTE.length].stroke,
-        }))
-    );
+    // No fallback templates — render exactly what the API provides, or nothing
+    setKeypoints(initialKeypoints ?? []);
+    setPolygons(initialPolygons ?? []);
   }, [img, initialKeypoints, initialPolygons]);
 
   // ── Fit-to-stage transform (content / Layer coordinates) ─────────────────────

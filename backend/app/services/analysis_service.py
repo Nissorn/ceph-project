@@ -160,6 +160,8 @@ def _preprocess_from_bytes(image_bytes: bytes, target_size: tuple[int, int] = IN
     img = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
     if img is None:
         raise ValueError("Cannot decode image from upload stream")
+    # BGR → RGB: matches src/phase2/inference.py preprocess_image() and dataset.py __getitem__
+    img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
     orig_h, orig_w = img.shape[:2]           # native dimensions
 
     # Resize to model input (W, H) = (512, 512)
