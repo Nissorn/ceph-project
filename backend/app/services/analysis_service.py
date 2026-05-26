@@ -603,8 +603,8 @@ class AnalysisService:
         poly_labial  = _mask_to_polygon(corrected_masks[CLASS_LABIAL_BONE])
         poly_palatal = _mask_to_polygon(corrected_masks[CLASS_PALATAL_BONE])
 
-        # ── Step 7: Biomechanical angle ────────────────────────────────────
-        u1_pp_angle_deg = _compute_u1_pp_angle_deg(snapped_all)
+        # ── Step 7: Biomechanical angle (from raw coords — snapping disabled) ──
+        u1_pp_angle_deg = _compute_u1_pp_angle_deg(raw_coords_orig)
 
         # ── Step 8: Assemble response dict ──────────────────────────────────
         def _lm_list(coords, confs, snapped_flags):
@@ -622,7 +622,7 @@ class AnalysisService:
         result = {
             "status": "success",
             "image_id": f"upload_{orig_w}x{orig_h}",
-            "landmarks": _lm_list(snapped_all, confidences, True),
+            "landmarks": _lm_list(raw_coords_orig, confidences, False),
             "raw_landmarks": _lm_list(raw_coords_orig, confidences, False),
             "segmentation": {
                 "Upper_incisor": {
