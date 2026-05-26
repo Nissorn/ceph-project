@@ -1,47 +1,56 @@
 """
 Tests for segmentation mask decoding behavior.
 
-Behavior under test: _decode_segmentation_masks produces mutually-exclusive
-binary masks — the model was trained with CrossEntropyLoss (multi-class, not
-multi-label), so argmax must resolve competition between classes.
+Architecture: 3 foreground-only sigmoid heads (no background class channel).
+Each class is decoded independently via sigmoid + threshold. This means:
+  - Background pixels (all logits low) appear in ZERO masks — correct.
+  - Foreground pixels appear in the mask of their class.
+  - Rare overlap between classes is handled downstream by _resolve_mask_overlaps.
+
+argmax is WRONG here because it forces every background pixel to be assigned
+to the highest-scoring foreground class, destroying small minority classes
+like Upper_incisor whose logits are dominated by the larger bone structures.
 """
 import numpy as np
 import torch
-import pytest
 
 from app.services.analysis_service import _decode_segmentation_masks
 
+THRESHOLD = 0.6  # must match implementation
 
-# ── Tracer bullet: mutual exclusivity ──────────────────────────────────────
 
-def test_masks_are_mutually_exclusive():
-    """No pixel may belong to more than one class."""
-    # All logits positive → sigmoid+threshold would claim every pixel for every
-    # class simultaneously (the bug).  Argmax must pick exactly one winner.
-    logits = torch.ones(1, 3, 4, 4) * 2.0
-    logits[0, 0, :2, :2] = 10.0   # class 0 dominates top-left quadrant
-    logits[0, 1, 2:, 2:] = 10.0   # class 1 dominates bottom-right quadrant
+# ── Tracer bullet: background pixels excluded ──────────────────────────────
+
+def test_background_pixels_belong_to_no_class():
+    """A pixel where all sigmoid outputs are below threshold has no class mask.
+
+    argmax would always assign such pixels to the highest-scoring foreground
+    class, which destroys minority classes like Upper_incisor.
+    """
+    # All logits strongly negative → sigmoid << threshold for every class
+    logits = torch.full((1, 3, 4, 4), -5.0)
 
     masks = _decode_segmentation_masks(logits, orig_w=4, orig_h=4)
 
     combined = sum(m.astype(int) for m in masks)
-    assert (combined <= 1).all(), (
-        "Overlapping masks detected: some pixels claimed by more than one class"
+    assert (combined == 0).all(), (
+        "Background pixels (all logits low) must appear in ZERO class masks"
     )
 
 
-# ── Full coverage: every pixel assigned ────────────────────────────────────
+# ── High-confidence foreground pixel lands in the right class ──────────────
 
-def test_every_pixel_assigned_to_exactly_one_class():
-    """Argmax is total — every pixel must belong to exactly one class."""
-    logits = torch.randn(1, 3, 8, 8)
+def test_high_logit_pixel_assigned_to_that_class_only():
+    """A pixel with only class 1 logit high appears in mask 1 and not in 0 or 2."""
+    logits = torch.full((1, 3, 4, 4), -5.0)
+    # Make the top-left pixel strongly activate class 1 only
+    logits[0, 1, 0, 0] = 5.0
 
-    masks = _decode_segmentation_masks(logits, orig_w=8, orig_h=8)
+    masks = _decode_segmentation_masks(logits, orig_w=4, orig_h=4)
 
-    combined = sum(m.astype(int) for m in masks)
-    assert (combined == 1).all(), (
-        "Some pixels have no class assignment — coverage is not total"
-    )
+    assert masks[1][0, 0] == 1, "Pixel with high class-1 logit must appear in mask 1"
+    assert masks[0][0, 0] == 0, "Same pixel must NOT appear in mask 0"
+    assert masks[2][0, 0] == 0, "Same pixel must NOT appear in mask 2"
 
 
 # ── Size correctness: output shape matches (orig_h, orig_w) ────────────────

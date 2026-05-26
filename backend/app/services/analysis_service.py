@@ -221,23 +221,27 @@ def _coords_input_to_orig(
 
 # ── segmentation mask helpers ─────────────────────────────────────────────────
 
+_SEG_THRESHOLD = 0.6   # stricter than 0.5 to tighten bloated boundaries
+
 def _decode_segmentation_masks(
     logits: torch.Tensor,   # [1, num_classes, H, W] raw model output
     orig_w: int,
     orig_h: int,
 ) -> list[np.ndarray]:
-    """Convert raw logits to mutually-exclusive binary masks via softmax+argmax.
+    """Decode raw logits to binary masks via independent per-class sigmoid.
 
-    The model was trained with CrossEntropyLoss (multi-class, not multi-label),
-    so argmax is the correct decoder — each pixel belongs to exactly one class.
-    Using independent sigmoid thresholds causes overlapping and bloated masks.
+    The model has 3 foreground-only output channels and NO background class.
+    argmax is wrong here: it forces every background pixel into the
+    highest-scoring foreground class, destroying small minority classes
+    like Upper_incisor. Independent sigmoid lets background pixels score
+    below threshold on all channels and appear in zero masks.
+    Rare pixel-level overlaps are resolved downstream by _resolve_mask_overlaps.
     """
-    probs = torch.softmax(logits, dim=1)
-    preds = probs.argmax(dim=1)[0].cpu().numpy()   # [H, W]
+    sig = torch.sigmoid(logits).cpu()[0].numpy()   # [num_classes, H, W]
     num_classes = logits.shape[1]
     masks_native_res = []
     for c in range(num_classes):
-        mask_512 = (preds == c).astype(np.uint8)
+        mask_512 = (sig[c] > _SEG_THRESHOLD).astype(np.uint8)
         mask = cv2.resize(mask_512, (orig_w, orig_h), interpolation=cv2.INTER_NEAREST)
         masks_native_res.append(mask)
     return masks_native_res
