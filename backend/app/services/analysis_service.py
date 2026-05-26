@@ -221,6 +221,27 @@ def _coords_input_to_orig(
 
 # ── segmentation mask helpers ─────────────────────────────────────────────────
 
+def _decode_segmentation_masks(
+    logits: torch.Tensor,   # [1, num_classes, H, W] raw model output
+    orig_w: int,
+    orig_h: int,
+) -> list[np.ndarray]:
+    """Convert raw logits to mutually-exclusive binary masks via softmax+argmax.
+
+    The model was trained with CrossEntropyLoss (multi-class, not multi-label),
+    so argmax is the correct decoder — each pixel belongs to exactly one class.
+    Using independent sigmoid thresholds causes overlapping and bloated masks.
+    """
+    probs = torch.softmax(logits, dim=1)
+    preds = probs.argmax(dim=1)[0].cpu().numpy()   # [H, W]
+    num_classes = logits.shape[1]
+    masks_native_res = []
+    for c in range(num_classes):
+        mask_512 = (preds == c).astype(np.uint8)
+        mask = cv2.resize(mask_512, (orig_w, orig_h), interpolation=cv2.INTER_NEAREST)
+        masks_native_res.append(mask)
+    return masks_native_res
+
 def _resolve_mask_overlaps(masks: list[np.ndarray]) -> tuple[list[np.ndarray], dict]:
     """
     Upper_incisor (class 0) takes priority over Palatal_bone (class 2).
@@ -579,14 +600,8 @@ class AnalysisService:
         # ── Step 3: Segmentation inference ─────────────────────────────────
         with torch.no_grad():
             logits = self._seg_model(tensor_512)
-            sig = torch.sigmoid(logits).cpu()[0].numpy()   # [3, 512, 512]
 
-        # Binary masks at 512×512 then resize to native resolution
-        raw_masks_512 = [(sig[c] > 0.5).astype(np.uint8) for c in range(3)]
-        raw_masks = [
-            cv2.resize(raw_masks_512[c], (orig_w, orig_h), interpolation=cv2.INTER_NEAREST)
-            for c in range(3)
-        ]
+        raw_masks = _decode_segmentation_masks(logits, orig_w, orig_h)
 
         # ── Step 4: Mask priority layering ─────────────────────────────────
         corrected_masks, mask_diag = _resolve_mask_overlaps(raw_masks)
