@@ -85,3 +85,4 @@ The system has successfully achieved elite clinical-grade metrics across both ba
 | #95  | 0.3322  | 0.2586 | DeepLabV3Plus          | watchdog update |
 | #100  | 0.3398  | 0.2503 | DeepLabV3Plus          | watchdog update |
 | #108  | 0.4256  | 0.3240 | DeepLabV3Plus          | watchdog update |
+| #178  | 0.4685  | 0.3721 | DeepLabV3Plus          | watchdog update |
