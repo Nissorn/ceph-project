@@ -120,5 +120,34 @@ The system has successfully achieved elite clinical-grade metrics across both ba
 - Watchdog: PID 1410033, 5-min dynamic PID cycles
 - Output: `fast_grid.log` for live run tracking
 - Target: **all 48 combos exhausted within 24 hours, best Dice to exceed 0.8588**
+
+## 10. Final Deep Run — 150 Epoch (2026-05-27)
+**Launch timestamp:** 2026-05-27 19:57 UTC
+
+**Configuration (confirmed winner from 433-experiment analysis):**
+| Parameter | Value |
+|---|---|
+| Architecture | DeepLabV3Plus |
+| Encoder | resnet34 (ImageNet pretrained) |
+| Learning rate | 3e-04 |
+| Weight decay | 1e-03 |
+| Batch size | 16 (4/GPU × 4 GPUs via DataParallel) |
+| Augmentation | heavy (flip 0.5, rotate ±15°, brightness/contrast, gauss noise, affine, grid/optic distort) |
+| CLAHE | True (clip=2.0, tile=8×8) |
+| Loss | CrossEntropyDiceLoss (dice_w=0.5) |
+| Epochs target | 150 (early stop patience=25) |
+| Classes | 4 (Background + Upper_incisor, Labial_bone, Palatal_bone) |
+
+**PID:** 1541384 (training) | 1541785 (watchdog) | 4 GPUs: GPU0=12572 GPU1=11272 GPU2=11152 GPU3=11120 MiB
+
+**Expected completion:** ~35 min wall time (150 ep × ~14s/ep) → well within 24-hour deadline
+
+**On-completion hook:** `evaluate_and_plot.py` auto-runs on `Patient01_T1.jpg` with:
+- Native-pixel landmark coordinates (`extent=(0, W_orig, 0, H_orig)`)
+- Correct polygon overlay on original image resolution
+- Ground-truth landmarks + predicted masks in distinct colors
+
+**Watchdog:** Dynamic PID tracking, auto-commits if new Dice > 0.8588
 | #0  | 0.4851  | 0.3711 | Unet          | watchdog update |
 | #0  | 0.5197  | 0.4080 | Unet          | watchdog update |
+| #5  | 0.4994  | 0.3875 | Unet          | watchdog update |
