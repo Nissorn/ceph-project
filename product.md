@@ -83,3 +83,4 @@ The system has successfully achieved elite clinical-grade metrics across both ba
   * Adaptive Wing Loss normalization: divides by `n_valid` only (not H*W)
 
 | #95  | 0.3322  | 0.2586 | DeepLabV3Plus          | watchdog update |
+| #100  | 0.3398  | 0.2503 | DeepLabV3Plus          | watchdog update |
