@@ -1,0 +1,24 @@
+{
+  "experiment_index": -1,
+  "run_id": "finalDeepRun_deeplabv3plus_resnet34_lr0.0003_wd0.001_bs4x4_150ep_20260527_195758",
+  "arch_name": "DeepLabV3Plus",
+  "encoder_name": "resnet34",
+  "lr": 0.0003,
+  "weight_decay": 0.001,
+  "batch_size": 4,
+  "aug_name": "heavy",
+  "use_clahe": true,
+  "loss_dice_weight": 0.5,
+  "epochs_trained": 150,
+  "patience": 25,
+  "val_dice": 0.7867531395501045,
+  "val_iou": 0.7867531395501045,
+  "num_classes": 4,
+  "classes": [
+    "Background",
+    "Upper_incisor",
+    "Labial_bone",
+    "Palatal_bone"
+  ],
+  "timestamp": "2026-05-27T20:29:13.261595"
+}
