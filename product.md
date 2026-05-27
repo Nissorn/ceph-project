@@ -86,3 +86,38 @@ The system has successfully achieved elite clinical-grade metrics across both ba
 | #100  | 0.3398  | 0.2503 | DeepLabV3Plus          | watchdog update |
 | #108  | 0.4256  | 0.3240 | DeepLabV3Plus          | watchdog update |
 | #178  | 0.4685  | 0.3721 | DeepLabV3Plus          | watchdog update |
+
+## 8. Visual Evaluation Pipeline (Phase 2B)
+- **Script:** `scripts/evaluate_and_plot.py` — fully operational
+- **Auto-finds best model** from `models/` by highest val_dice (currently: exp0000_DeepLabV3Plus_resnet34_clahe1, dice=0.8588)
+- **Pipeline:** Load model → run inference (argmax, no overlap) → decode contours → overlay polygons on original image → overlay ground-truth landmarks → save to `reports/visual_results/`
+- **Output:** `reports/visual_results/eval_Patient01_T1_<timestamp>.png` — 590KB, 120dpi
+- **Usage:** `python3 scripts/evaluate_and_plot.py [--image Patient03_T1.jpg] [--model-dir <path>]`
+- **Classes plotted:** Upper_incisor (red), Labial_bone (blue), Palatal_bone (green), landmarks (yellow)
+
+## 9. Grid Pruning & 24-Hour Deadline Strategy (2026-05-27)
+**Situation:** 1728-combo exhaustive grid at 6 min/run = ~6.3 days. Deadline: 24 hours max.
+
+**Server Cleansing (Phase 1):**
+- External processes `envs/oxygen` PIDs 1279945 and 1303468 were competing for all GPUs — cleared
+- All 4 GPUs now dedicated exclusively to `ceph-v2-auto` training
+- Old watchdog processes purged; fresh watchdog PID 1410033 launched
+
+**Data-Driven Grid Pruning (Phase 2):**
+- Analyzed 372 completed 4-class experiments to identify dominant hyperparameter regions
+- Key findings:
+  - `DeepLabV3Plus` dominates: best=0.8588, mean=0.2987
+  - `lr=0.0003` + `wd=0.001` + `aug=heavy` + `clahe=True` is the consistent winner
+  - `AttentionUnet` and `Unet` are viable alternatives worth exploring
+  - `efficientnet-b4` encoder (with Unet) is the strongest alternative backbone
+  - `extreme` augmentation consistently underperforms
+- Pruned grid: 4 archs × 1-2 encoders × 3 LRs × 2 WDs × 2 augs = **48 combos**
+- 6 epochs per run (~3 min/run) × 48 = ~144 min total / 4 GPUs = **36 min wall time**
+- `auto_research_iter1.py` modified with `--max-experiments 48` flag + `fast_grid.json` override
+
+**Execution:**
+- Training: PID 1409248, GPU0=44%, GPU1=47%, GPU2=17%, GPU3=33% (all 4 active)
+- Watchdog: PID 1410033, 5-min dynamic PID cycles
+- Output: `fast_grid.log` for live run tracking
+- Target: **all 48 combos exhausted within 24 hours, best Dice to exceed 0.8588**
+| #0  | 0.4851  | 0.3711 | Unet          | watchdog update |
