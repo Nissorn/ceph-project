@@ -161,3 +161,4 @@ The system has successfully achieved elite clinical-grade metrics across both ba
 | #5  | 0.4994  | 0.3875 | Unet          | watchdog update |
 | #9  | 0.5710  | 0.4628 | Unet          | watchdog update |
 | #9  | 0.5710  | 0.4628 | Unet          | watchdog update |
+| #24  | 0.5075  | 0.3976 | Unet          | watchdog update |
