@@ -148,6 +148,14 @@ The system has successfully achieved elite clinical-grade metrics across both ba
 - Ground-truth landmarks + predicted masks in distinct colors
 
 **Watchdog:** Dynamic PID tracking, auto-commits if new Dice > 0.8588
+
+**STATUS: COMPLETED ✅** (2026-05-27 20:29 UTC)
+
+**Final Deliverables:**
+- **Model weights (FastAPI path):** `/home/iddi/ceph-v2-auto/models/finalDeepRun_deeplabv3plus_resnet34_lr0.0003_wd0.001_bs4x4_150ep_20260527_195758/best_model.pt`
+- **Visualization:** `/home/iddi/ceph-v2-auto/reports/visual_results/eval_Patient01_T1_20260527_202919.png`
+- **Git branch:** `experiment/DeepLabV3Plus-resnet34-dice07868` → pushed to origin ✅
+- **GitHub PR:** https://github.com/Nissorn/ceph-project/pull/new/experiment/DeepLabV3Plus-resnet34-dice07868
 | #0  | 0.4851  | 0.3711 | Unet          | watchdog update |
 | #0  | 0.5197  | 0.4080 | Unet          | watchdog update |
 | #5  | 0.4994  | 0.3875 | Unet          | watchdog update |
