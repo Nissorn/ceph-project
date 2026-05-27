@@ -81,3 +81,5 @@ The system has successfully achieved elite clinical-grade metrics across both ba
   * `backbone_lr: 1e-5`, `head_lr: 1e-3` (differential LR, Stage 1+2 frozen)
   * SoftArgmax temperature: `1.0` (was 10.0 — was over-smoothing coordinates)
   * Adaptive Wing Loss normalization: divides by `n_valid` only (not H*W)
+
+| #95  | 0.3322  | 0.2586 | DeepLabV3Plus          | watchdog update |
