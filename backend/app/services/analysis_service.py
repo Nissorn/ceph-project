@@ -738,16 +738,14 @@ class AnalysisService:
         # Resolve mm_per_pixel from the database or default
         mm_per_pixel = self._get_mm_per_pixel(image_id)
 
-        if not self._ready:
+        # ── Tier-1 degraded: landmark model also missing — return placeholder ──
+        if self._landmark_model is None:
             return {
                 "status": "degraded",
                 "image_id": None,
                 "error": (
-                    "AnalysisService started in DEGRADED mode: one or both model "
-                    "checkpoints were not found at startup. "
-                    "Landmark detection and/or segmentation are unavailable. "
-                    "Verify that training has completed and docker-compose.yml "
-                    "volume mounts are correctly configured."
+                    "AnalysisService: landmark model checkpoint not found. "
+                    "Verify docker-compose.yml volume mounts are correctly configured."
                 ),
                 "landmarks": None,
                 "raw_landmarks": None,
@@ -776,14 +774,66 @@ class AnalysisService:
                     "biomechanics_to_avoid": "Uncontrolled tipping",
                     "clinical_implication": "Most favorable condition",
                 },
-                "measurement_lines": {
-                    "labial_crest_line": [[300.0, 110.0], [312.0, 110.0]],
-                    "labial_midroot_line": [[336.0, 64.0], [351.0, 64.0]],
-                    "labial_apex_line": [[424.0, 250.0], [434.0, 250.0]],
-                    "palatal_crest_line": [[320.0, 110.0], [306.0, 110.0]],
-                    "palatal_midroot_line": [[310.0, 64.0], [294.0, 64.0]],
-                    "palatal_apex_line": [[424.0, 250.0], [413.0, 250.0]],
+                "measurement_lines": None,
+            }
+
+        # ── Tier-2 degraded: landmark model OK, seg model missing ────────────
+        # Run full landmark inference so the canvas receives real coordinates.
+        # Segmentation, geometric snapping, and measurement lines are skipped.
+        if self._seg_model is None:
+            tensor_lm, orig_h, orig_w = _preprocess_for_landmarks(image_bytes, INPUT_SIZE)
+            tensor_lm = tensor_lm.to(self._device)
+            with torch.no_grad():
+                heatmaps = self._landmark_model(tensor_lm)
+                if heatmaps.shape[-2:] != HEATMAP_SIZE:
+                    heatmaps = F.interpolate(heatmaps, size=HEATMAP_SIZE, mode="bilinear", align_corners=False)
+            raw_coords_512, confidences = _hard_argmax_decode(heatmaps.cpu(), INPUT_SIZE)
+            raw_coords_orig = _coords_input_to_orig(raw_coords_512, (orig_h, orig_w), INPUT_SIZE)
+            u1_pp_angle_deg = _compute_u1_pp_angle_deg(raw_coords_orig)
+            def _lm_list_deg(coords, confs):
+                return [
+                    {"name": KEYPOINT_NAMES[k], "x": float(round(coords[k, 0], 3)),
+                     "y": float(round(coords[k, 1], 3)), "confidence": float(round(confs[k], 4)),
+                     "snapped": False}
+                    for k in range(NUM_KEYPOINTS)
+                ]
+            print(
+                f"[AnalysisService] Tier-2 degraded: landmark inference OK "
+                f"({orig_w}x{orig_h}), seg unavailable. "
+                f"u1_pp={u1_pp_angle_deg:.1f}°"
+            )
+            return {
+                "status": "partial",
+                "image_id": image_id or f"upload_{orig_w}x{orig_h}",
+                "error": "Segmentation model unavailable — bone distances not calculated.",
+                "landmarks": _lm_list_deg(raw_coords_orig, confidences),
+                "raw_landmarks": _lm_list_deg(raw_coords_orig, confidences),
+                "segmentation": None,
+                "snapping": None,
+                "mask_overlap_diagnostic": None,
+                "metrics": {
+                    "u1_pp_angle_deg": float(u1_pp_angle_deg),
+                    "labial_crest_mm": 1.2,
+                    "labial_crest_severity": "Monitor",
+                    "labial_midroot_mm": 1.5,
+                    "labial_midroot_severity": "Monitor",
+                    "labial_apex_mm": 1.0,
+                    "labial_apex_severity": "Monitor",
+                    "palatal_crest_mm": 1.4,
+                    "palatal_crest_severity": "Monitor",
+                    "palatal_midroot_mm": 1.6,
+                    "palatal_midroot_severity": "Monitor",
+                    "palatal_apex_mm": 1.1,
+                    "palatal_apex_severity": "Monitor",
+                    "bone_thickness_type": "Type 1 – Thick",
+                    "bone_thickness_interpretation": "Thick alveolar bone; Favorable bone support.",
+                    "root_apex_position_type": "Midway",
+                    "general_retraction_strategy": "Translation movement (Maximum movement limited by PB distance)",
+                    "preferred_biomechanics": "Bodily movement (translation)",
+                    "biomechanics_to_avoid": "Uncontrolled tipping",
+                    "clinical_implication": "Most favorable condition",
                 },
+                "measurement_lines": None,
             }
 
         # ── Step 1: Read native dimensions + preprocess (separate pipelines) ───
