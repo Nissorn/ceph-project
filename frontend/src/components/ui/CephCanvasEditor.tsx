@@ -120,6 +120,7 @@ export default function CephCanvasEditor({
   const [debugInfo, setDebugInfo]         = useState({ x: 0, y: 0, imageX: 0, imageY: 0 });
   const [isDebugMode, setIsDebugMode]     = useState(false);
   const [isToolbarOpen, setIsToolbarOpen] = useState(true);
+  const [hoveredLineIdx, setHoveredLineIdx] = useState<number | null>(null);
 
   // ── Sync stale-proof ref with state ──────────────────────────────────────────
   useEffect(() => { scaleRef.current = stageScale; }, [stageScale]);
@@ -580,29 +581,49 @@ export default function CephCanvasEditor({
                       listening={false}
                     />
                   )}
-                  {/* Measurement Projections - solid lines with labels */}
+                  {/* Measurement Projections - solid lines with labels on hover */}
                   {visualProjectionLines.map((line, idx) => {
                     if (line.points.length !== 4) return null;
                     const [x1, y1, x2, y2] = line.points;
                     const midX = (x1 + x2) / 2;
                     const midY = (y1 + y2) / 2;
+                    const isHovered = hoveredLineIdx === idx;
                     return (
                       <React.Fragment key={idx}>
+                        {/* Visual line */}
                         <Line
                           points={line.points}
                           stroke={line.color}
-                          strokeWidth={2.5 / stageScale}
+                          strokeWidth={(isHovered ? 4.0 : 2.5) / stageScale}
                           lineCap="round"
                           lineJoin="round"
                           listening={false}
                         />
-                        {line.label && (
+                        {/* Transparent interactive line with a wider hit area */}
+                        <Line
+                          points={line.points}
+                          stroke="rgba(0,0,0,0)"
+                          strokeWidth={15 / stageScale}
+                          lineCap="round"
+                          lineJoin="round"
+                          onMouseEnter={(e) => {
+                            setHoveredLineIdx(idx);
+                            setCursor(e, 'pointer');
+                          }}
+                          onMouseLeave={(e) => {
+                            setHoveredLineIdx(null);
+                            setCursor(e, 'default');
+                          }}
+                        />
+                        {/* Hover label */}
+                        {isHovered && line.label && (
                           <Text
                             x={midX - 50 / stageScale}
-                            y={midY - 6 / stageScale}
+                            y={midY - 12 / stageScale} // Render slightly above midpoint for better visibility
                             width={100 / stageScale}
                             text={line.label}
                             fontSize={11 / stageScale}
+                            fontStyle="bold"
                             fill="#ffffff"
                             stroke="#0f172a"
                             strokeWidth={3.5 / stageScale}
