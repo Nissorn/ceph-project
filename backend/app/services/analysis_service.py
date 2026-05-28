@@ -41,7 +41,8 @@ from scipy.spatial.distance import euclidean
 #     parents[2] = /app           ← WORKDIR = correct ROOT
 #     parents[3] = /             ← WRONG (goes above WORKDIR to host fs root)
 # On Mac dev machine (no Docker), this resolves to the repo root the same way.
-ROOT = Path(__file__).resolve().parent.parent
+_parents = Path(__file__).resolve().parents
+ROOT = _parents[3] if _parents[2].name == "backend" else _parents[2]
 sys.path.insert(0, str(ROOT))
 warnings.filterwarnings("ignore")
 
@@ -195,7 +196,8 @@ def _apply_clahe(img: np.ndarray) -> np.ndarray:
 def _preprocess_for_segmentation(image_bytes: bytes, target_size: tuple[int, int] = INPUT_SIZE):
     """
     Decode JPEG/PNG bytes, apply CLAHE (matching segmentation training domain),
-    resize, convert to float32/255, normalise with ImageNet stats.
+    resize, convert to float32/255.
+    NO ImageNet normalisation — matches the segmentation training pipeline.
     """
     nparr = np.frombuffer(image_bytes, np.uint8)
     img = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
@@ -214,10 +216,6 @@ def _preprocess_for_segmentation(image_bytes: bytes, target_size: tuple[int, int
         .permute(2, 0, 1)    # HWC → CHW
         / 255.0
     )
-    # ImageNet normalisation (segmentation model expects this)
-    mean = torch.tensor([0.485, 0.456, 0.406]).view(3, 1, 1)
-    std  = torch.tensor([0.229, 0.224, 0.225]).view(3, 1, 1)
-    tensor = (tensor - mean) / std
     return tensor.unsqueeze(0), orig_h, orig_w  # [1, 3, H, W]
 
 
@@ -551,16 +549,19 @@ class AnalysisService:
             self._landmark_model = lm
             print(f"[AnalysisService] Landmark model loaded: {landmark_ckpt_path.name}")
 
-        # ── Segmentation model (DeepLabV3Plus, 4-class argmax) ─────────────────
-        # User placed trained weights at project root — also fall back to models/exp*/
-        seg_ckpt_path = ROOT / "best_model.pt"
-        if not seg_ckpt_path.exists():
-            seg_ckpt_path = ROOT / "models" / "exp0128_DeepLabV3Plus_resnet34_20260524_043501" / "best_model.pt"
+        current_dir = Path(__file__).resolve()
+        possible_paths = [
+            current_dir.parents[3] / "best_model.pt", # Host root
+            current_dir.parents[2] / "best_model.pt", # Docker /app root
+            Path("/app/best_model.pt"),
+            Path("/app/backend/best_model.pt")
+        ]
+        seg_ckpt_path = next((p for p in possible_paths if p.exists()), possible_paths[0])
+
         if not seg_ckpt_path.exists():
             print(
                 "[AnalysisService] WARNING: Segmentation checkpoint not found:\n"
-                f"  Tried: {ROOT / 'best_model.pt'}\n"
-                f"  Tried: {ROOT / 'models' / 'exp0128_DeepLabV3Plus_resnet34_20260524_043501' / 'best_model.pt'}\n"
+                f"  Tried: {list(map(str, possible_paths))}\n"
                 "  Segmentation model unavailable.\n"
                 "  Verify: docker-compose.yml has './ceph-project:/app/ceph-project' volume mount."
             )
@@ -568,7 +569,8 @@ class AnalysisService:
         else:
             sm = _build_segmentation_model(4)
             seg_state = torch.load(seg_ckpt_path, map_location=self._device, weights_only=False)
-            sm.load_state_dict(seg_state, strict=False)
+            cleaned_state = {k.replace('module.', ''): v for k, v in seg_state.items()}
+            sm.load_state_dict(cleaned_state, strict=True)
             sm = sm.to(self._device)
             sm.eval()
             self._seg_model = sm
