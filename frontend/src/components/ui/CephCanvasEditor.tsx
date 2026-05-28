@@ -33,6 +33,7 @@ interface Props {
     palatal_midroot_line: number[][];
     palatal_apex_line: number[][];
   } | null;
+  metricsData?: any;
 }
 
 // ── Medical imaging colour palette ───────────────────────────────────────────
@@ -98,7 +99,7 @@ function nearestEdgeInsert(
 export default function CephCanvasEditor({
   imageFile, initialKeypoints, initialPolygons,
   onKeypointsChange, onPolygonsChange,
-  measurementLines,
+  measurementLines, metricsData,
 }: Props) {
   const containerRef  = useRef<HTMLDivElement>(null);
   const stageRef      = useRef<any>(null);
@@ -224,14 +225,14 @@ export default function CephCanvasEditor({
     try {
       if (!measurementLines || !img) return [];
       const lines = [
-        { line: measurementLines.labial_crest_line,    color: '#f59e0b' },
-        { line: measurementLines.labial_midroot_line,  color: '#ef4444' },
-        { line: measurementLines.labial_apex_line,     color: '#ef4444' },
-        { line: measurementLines.palatal_crest_line,   color: '#f59e0b' },
-        { line: measurementLines.palatal_midroot_line, color: '#ef4444' },
-        { line: measurementLines.palatal_apex_line,    color: '#ef4444' },
+        { line: measurementLines.labial_crest_line,    color: '#f59e0b', key: 'labial_crest_mm' },
+        { line: measurementLines.labial_midroot_line,  color: '#ef4444', key: 'labial_midroot_mm' },
+        { line: measurementLines.labial_apex_line,     color: '#ef4444', key: 'labial_apex_mm' },
+        { line: measurementLines.palatal_crest_line,   color: '#f59e0b', key: 'palatal_crest_mm' },
+        { line: measurementLines.palatal_midroot_line, color: '#ef4444', key: 'palatal_midroot_mm' },
+        { line: measurementLines.palatal_apex_line,    color: '#ef4444', key: 'palatal_apex_mm' },
       ];
-      const result: { points: number[]; color: string }[] = [];
+      const result: { points: number[]; color: string; label?: string }[] = [];
       for (const item of lines) {
         if (
           !Array.isArray(item.line) || item.line.length !== 2 ||
@@ -245,14 +246,29 @@ export default function CephCanvasEditor({
         const [cx1, cy1] = toContent(x1r, y1r);
         const [cx2, cy2] = toContent(x2r, y2r);
         if (!Number.isFinite(cx1) || !Number.isFinite(cy1)) continue;
-        result.push({ points: [cx1, cy1, cx2, cy2], color: item.color });
+
+        let val: number | undefined = undefined;
+        if (metricsData) {
+          if (typeof metricsData[item.key] === 'number') {
+            val = metricsData[item.key];
+          } else if (typeof metricsData[item.key.replace('_mm', '')] === 'number') {
+            val = metricsData[item.key.replace('_mm', '')];
+          }
+        }
+        const labelText = (typeof val === 'number' && !isNaN(val)) ? `${val.toFixed(2)} mm` : '';
+
+        result.push({
+          points: [cx1, cy1, cx2, cy2],
+          color: item.color,
+          label: labelText,
+        });
       }
       return result;
     } catch (err) {
       console.warn('[CephEditor] visualProjectionLines computation failed:', err);
       return [];
     }
-  }, [img, measurementLines, toContent]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [img, measurementLines, metricsData, toContent]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // ── Propagate changes upward ──────────────────────────────────────────────────
   useEffect(() => { onKeypointsChange?.(keypoints); }, [keypoints]); // eslint-disable-line
@@ -564,18 +580,40 @@ export default function CephCanvasEditor({
                       listening={false}
                     />
                   )}
-                  {/* Measurement Projections - solid lines with end-caps */}
-                  {visualProjectionLines.map((line, idx) => (
-                    <Line
-                      key={idx}
-                      points={line.points}
-                      stroke={line.color}
-                      strokeWidth={2.5 / stageScale}
-                      lineCap="round"
-                      lineJoin="round"
-                      listening={false}
-                    />
-                  ))}
+                  {/* Measurement Projections - solid lines with labels */}
+                  {visualProjectionLines.map((line, idx) => {
+                    if (line.points.length !== 4) return null;
+                    const [x1, y1, x2, y2] = line.points;
+                    const midX = (x1 + x2) / 2;
+                    const midY = (y1 + y2) / 2;
+                    return (
+                      <React.Fragment key={idx}>
+                        <Line
+                          points={line.points}
+                          stroke={line.color}
+                          strokeWidth={2.5 / stageScale}
+                          lineCap="round"
+                          lineJoin="round"
+                          listening={false}
+                        />
+                        {line.label && (
+                          <Text
+                            x={midX - 50 / stageScale}
+                            y={midY - 6 / stageScale}
+                            width={100 / stageScale}
+                            text={line.label}
+                            fontSize={11 / stageScale}
+                            fill="#ffffff"
+                            stroke="#0f172a"
+                            strokeWidth={3.5 / stageScale}
+                            fillAfterStroke={true}
+                            align="center"
+                            listening={false}
+                          />
+                        )}
+                      </React.Fragment>
+                    );
+                  })}
                 </Group>
               )}
             </Layer>
