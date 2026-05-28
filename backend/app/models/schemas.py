@@ -71,6 +71,15 @@ class SegmentationData(BaseModel):
     Palatal_bone: SegmentationClass
 
 
+class MeasurementLines(BaseModel):
+    labial_crest_line: List[List[float]]
+    labial_midroot_line: List[List[float]]
+    labial_apex_line: List[List[float]]
+    palatal_crest_line: List[List[float]]
+    palatal_midroot_line: List[List[float]]
+    palatal_apex_line: List[List[float]]
+
+
 class AnalysisResultData(BaseModel):
     image_id: Optional[str] = None
     landmarks: Optional[List[LandmarkPoint]] = None
@@ -79,6 +88,7 @@ class AnalysisResultData(BaseModel):
     snapping: Optional[Dict[str, Any]] = None
     mask_overlap_diagnostic: Optional[MaskOverlapDiagnostic] = None
     metrics: Metrics
+    measurement_lines: Optional[MeasurementLines] = None
     _debug: Optional[DebugInfo] = None
 
 

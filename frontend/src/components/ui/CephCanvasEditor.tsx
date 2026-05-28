@@ -25,6 +25,14 @@ interface Props {
   initialPolygons?: PolygonShape[];
   onKeypointsChange?: (kps: Keypoint[]) => void;
   onPolygonsChange?: (polys: PolygonShape[]) => void;
+  measurementLines?: {
+    labial_crest_line: number[][];
+    labial_midroot_line: number[][];
+    labial_apex_line: number[][];
+    palatal_crest_line: number[][];
+    palatal_midroot_line: number[][];
+    palatal_apex_line: number[][];
+  } | null;
 }
 
 // ── Medical imaging colour palette ───────────────────────────────────────────
@@ -90,6 +98,7 @@ function nearestEdgeInsert(
 export default function CephCanvasEditor({
   imageFile, initialKeypoints, initialPolygons,
   onKeypointsChange, onPolygonsChange,
+  measurementLines,
 }: Props) {
   const containerRef  = useRef<HTMLDivElement>(null);
   const stageRef      = useRef<any>(null);
@@ -105,6 +114,7 @@ export default function CephCanvasEditor({
   const [stageScale, setStageScale]       = useState(1);
   const [showLandmarks, setShowLandmarks] = useState(true);
   const [showPolygons, setShowPolygons]   = useState(true);
+  const [showRulers, setShowRulers]       = useState(true);
   const [pointSize, setPointSize]         = useState(4);
   const [debugInfo, setDebugInfo]         = useState({ x: 0, y: 0, imageX: 0, imageY: 0 });
   const [isDebugMode, setIsDebugMode]     = useState(false);
@@ -166,6 +176,55 @@ export default function CephCanvasEditor({
     (cx: number, cy: number): [number, number] => [(cx - offX) / fitScale, (cy - offY) / fitScale],
     [fitScale, offX, offY]
   );
+
+  // ── Geometry: Visual Guides (U1 and PP lines, measurement projections) ─────
+  const u1Line = useMemo(() => {
+    const upperTip = keypoints.find(k => k.name === 'Upper_tip');
+    const upperApex = keypoints.find(k => k.name === 'Upper_apex');
+    if (!upperTip || !upperApex) return null;
+    const dx = upperApex.x - upperTip.x;
+    const dy = upperApex.y - upperTip.y;
+    // Extend past tip by 15% and apex by 30% (upwards)
+    const p1 = [upperTip.x - dx * 0.15, upperTip.y - dy * 0.15];
+    const p2 = [upperApex.x + dx * 0.3, upperApex.y + dy * 0.3];
+    const [cx1, cy1] = toContent(p1[0], p1[1]);
+    const [cx2, cy2] = toContent(p2[0], p2[1]);
+    return [cx1, cy1, cx2, cy2];
+  }, [keypoints, toContent]);
+
+  const ppLine = useMemo(() => {
+    const ans = keypoints.find(k => k.name === 'ANS');
+    const pns = keypoints.find(k => k.name === 'PNS');
+    if (!ans || !pns) return null;
+    const dx = pns.x - ans.x;
+    const dy = pns.y - ans.y;
+    // Extend past both by 20%
+    const p1 = [ans.x - dx * 0.2, ans.y - dy * 0.2];
+    const p2 = [pns.x + dx * 0.2, pns.y + dy * 0.2];
+    const [cx1, cy1] = toContent(p1[0], p1[1]);
+    const [cx2, cy2] = toContent(p2[0], p2[1]);
+    return [cx1, cy1, cx2, cy2];
+  }, [keypoints, toContent]);
+
+  const visualProjectionLines = useMemo(() => {
+    if (!measurementLines) return [];
+    const lines = [
+      { line: measurementLines.labial_crest_line, color: '#f59e0b' },
+      { line: measurementLines.labial_midroot_line, color: '#ef4444' },
+      { line: measurementLines.labial_apex_line, color: '#ef4444' },
+      { line: measurementLines.palatal_crest_line, color: '#f59e0b' },
+      { line: measurementLines.palatal_midroot_line, color: '#ef4444' },
+      { line: measurementLines.palatal_apex_line, color: '#ef4444' },
+    ];
+    return lines
+      .filter(item => item.line && item.line.length === 2)
+      .map(item => {
+        const [p1, p2] = item.line;
+        const [cx1, cy1] = toContent(p1[0], p1[1]);
+        const [cx2, cy2] = toContent(p2[0], p2[1]);
+        return { points: [cx1, cy1, cx2, cy2], color: item.color };
+      });
+  }, [measurementLines, toContent]);
 
   // ── Propagate changes upward ──────────────────────────────────────────────────
   useEffect(() => { onKeypointsChange?.(keypoints); }, [keypoints]); // eslint-disable-line
@@ -422,6 +481,42 @@ export default function CephCanvasEditor({
                 );
               })}
 
+              {/* ── Geometric Overlays / Rulers ──────────────────────────── */}
+              {showRulers && (
+                <Group>
+                  {/* U1 Axis (Long axis of incisor) - dashed orange */}
+                  {u1Line && (
+                    <Line
+                      points={u1Line}
+                      stroke="#f97316"
+                      strokeWidth={2 / stageScale}
+                      dash={[6, 6]}
+                      listening={false}
+                    />
+                  )}
+                  {/* Palatal Plane (PP) - dashed blue */}
+                  {ppLine && (
+                    <Line
+                      points={ppLine}
+                      stroke="#3b82f6"
+                      strokeWidth={2 / stageScale}
+                      dash={[6, 6]}
+                      listening={false}
+                    />
+                  )}
+                  {/* Measurement Projections - solid lines */}
+                  {visualProjectionLines.map((line, idx) => (
+                    <Line
+                      key={idx}
+                      points={line.points}
+                      stroke={line.color}
+                      strokeWidth={2.5 / stageScale}
+                      listening={false}
+                    />
+                  ))}
+                </Group>
+              )}
+
               {/* ── Keypoints ─────────────────────────────────────────────── */}
               {showLandmarks && keypoints.map((kp) => {
                 const [kx, ky] = toContent(kp.x, kp.y);
@@ -541,6 +636,14 @@ export default function CephCanvasEditor({
                       className="accent-cyan-400 w-3 h-3 cursor-pointer"
                     />
                     Polygons
+                  </label>
+                  <label className="flex items-center gap-1 cursor-pointer select-none whitespace-nowrap">
+                    <input
+                      type="checkbox" checked={showRulers}
+                      onChange={(e) => setShowRulers(e.target.checked)}
+                      className="accent-rose-400 w-3 h-3 cursor-pointer"
+                    />
+                    Rulers
                   </label>
                 </div>
 

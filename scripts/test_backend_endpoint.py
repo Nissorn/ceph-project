@@ -153,6 +153,28 @@ def _audit_response(payload: dict) -> tuple[bool, list[str]]:
                 if not isinstance(val, str) or not val:
                     errors.append(f"metrics.{field} is not a non-empty string: {val!r}")
 
+    # 5. measurement_lines check
+    m_lines = data.get("measurement_lines")
+    if m_lines is not None or status != "degraded":
+        if not isinstance(m_lines, dict):
+            errors.append(f"Expected dict for measurement_lines, got {m_lines}")
+        else:
+            required_lines = [
+                "labial_crest_line", "labial_midroot_line", "labial_apex_line",
+                "palatal_crest_line", "palatal_midroot_line", "palatal_apex_line"
+            ]
+            for line_name in required_lines:
+                if line_name not in m_lines:
+                    errors.append(f"measurement_lines missing '{line_name}'")
+                else:
+                    line = m_lines[line_name]
+                    if not isinstance(line, list) or len(line) != 2:
+                        errors.append(f"measurement_lines.{line_name} is not a coordinate pair of length 2: {line!r}")
+                    else:
+                        for pt in line:
+                            if not isinstance(pt, list) or len(pt) != 2 or not all(isinstance(coord, (int, float)) for coord in pt):
+                                errors.append(f"measurement_lines.{line_name} contains invalid coordinate point: {pt!r}")
+
     return (len(errors) == 0, errors)
 
 

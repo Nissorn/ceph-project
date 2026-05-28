@@ -228,6 +228,7 @@ export default function DashboardApp() {
         preferred_biomechanics,
         biomechanics_to_avoid,
         clinical_implication,
+        measurement_lines: payload.measurement_lines || null,
         annotations: { keypoints: apiKeypoints, polygons: apiPolygons },
       };
 
@@ -274,6 +275,7 @@ export default function DashboardApp() {
                      imageFile={file}
                      initialKeypoints={results.annotations?.keypoints}
                      initialPolygons={results.annotations?.polygons}
+                     measurementLines={results.measurement_lines}
                    />
                  </div>
                ) : previewUrl ? (

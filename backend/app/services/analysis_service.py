@@ -776,6 +776,14 @@ class AnalysisService:
                     "biomechanics_to_avoid": "Uncontrolled tipping",
                     "clinical_implication": "Most favorable condition",
                 },
+                "measurement_lines": {
+                    "labial_crest_line": [[300.0, 110.0], [312.0, 110.0]],
+                    "labial_midroot_line": [[336.0, 64.0], [351.0, 64.0]],
+                    "labial_apex_line": [[424.0, 250.0], [434.0, 250.0]],
+                    "palatal_crest_line": [[320.0, 110.0], [306.0, 110.0]],
+                    "palatal_midroot_line": [[310.0, 64.0], [294.0, 64.0]],
+                    "palatal_apex_line": [[424.0, 250.0], [413.0, 250.0]],
+                },
             }
 
         # ── Step 1: Read native dimensions + preprocess (separate pipelines) ───
@@ -909,6 +917,28 @@ class AnalysisService:
         palatal_crest_sev = _get_distance_severity(palatal_crest_mm)
         palatal_midroot_sev = _get_distance_severity(palatal_midroot_mm)
         palatal_apex_sev = _get_distance_severity(palatal_apex_mm)
+
+        # Target coordinates for drawing perpendicular measurement lines
+        labial_crest_target = P_tooth_lc
+        palatal_crest_target = P_tooth_pc
+
+        labial_midroot_target = labial_midroot_pt + labial_midroot_px * u1_perp
+        palatal_midroot_target = palatal_midroot_pt - palatal_midroot_px * u1_perp
+
+        labial_apex_target = apex + labial_apex_px * u1_perp
+        palatal_apex_target = apex - palatal_apex_px * u1_perp
+
+        def _to_line_coords(pt1, pt2):
+            return [[float(round(pt1[0], 3)), float(round(pt1[1], 3))], [float(round(pt2[0], 3)), float(round(pt2[1], 3))]]
+
+        measurement_lines = {
+            "labial_crest_line": _to_line_coords(labial_crest_pt, labial_crest_target),
+            "labial_midroot_line": _to_line_coords(labial_midroot_pt, labial_midroot_target),
+            "labial_apex_line": _to_line_coords(apex, labial_apex_target),
+            "palatal_crest_line": _to_line_coords(palatal_crest_pt, palatal_crest_target),
+            "palatal_midroot_line": _to_line_coords(palatal_midroot_pt, palatal_midroot_target),
+            "palatal_apex_line": _to_line_coords(apex, palatal_apex_target),
+        }
 
         # ── Step 7.6: Alveolar Bone Thickness Classification (Zhang et al. 2021) ──
         # Define "Thin" as strictly < 0.5 mm and "Thick" as >= 0.5 mm to avoid edge-case None classifications
@@ -1054,6 +1084,7 @@ class AnalysisService:
             },
             "snapping": snapping_diag,
             "mask_overlap_diagnostic": mask_diag,
+            "measurement_lines": measurement_lines,
             "metrics": {
                 "u1_pp_angle_deg": float(u1_pp_angle_deg),
                 "labial_crest_mm": float(round(labial_crest_mm, 3)),
