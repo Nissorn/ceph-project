@@ -22,7 +22,7 @@ no hardcoded assumptions about input size can cause data leakage.
 
 from __future__ import annotations
 
-import sys, warnings, math, io
+import sys, warnings, math, io, os
 from pathlib import Path
 from typing import Optional
 
@@ -95,9 +95,12 @@ KEYPOINT_NAMES = [
     "Palatal_midroot", "Palatal_crest", "ANS", "PNS", "LB", "PB",
 ]
 
-CLASS_UPPER_INCISOR = 0
-CLASS_LABIAL_BONE   = 1
-CLASS_PALATAL_BONE  = 2
+# ── class indices (4-class model, argmax inference) ─────────────────────────
+# Background=0, Upper_incisor=1, Labial_bone=2, Palatal_bone=3
+CLASS_BACKGROUND      = 0
+CLASS_UPPER_INCISOR   = 1
+CLASS_LABIAL_BONE     = 2
+CLASS_PALATAL_BONE    = 3
 
 # ── model builders (mirrors src/phase2/inference.py) ────────────────────────
 
@@ -263,13 +266,12 @@ def _coords_input_to_orig(
     return out
 
 
-# ── 3-class segmentation (Upper_incisor, Labial_bone, Palatal_bone) ─────────────
-# Model outputs 3 channels (no background class).
-# argmax over the 3 channels gives class indices 0, 1, 2 mapped directly:
-#   0 → Upper_incisor  (output index 0)
-#   1 → Labial_bone    (output index 1)
-#   2 → Palatal_bone   (output index 2)
-
+# ── 4-class segmentation (Background, Upper_incisor, Labial_bone, Palatal_bone) ──
+# Model outputs 4 channels. argmax over channels gives class indices {0,1,2,3}:
+#   0 → Background    (discarded — not sent to frontend)
+#   1 → Upper_incisor → output index 0
+#   2 → Labial_bone   → output index 1
+#   3 → Palatal_bone  → output index 2
 
 def _decode_segmentation_masks(
     logits: torch.Tensor,   # [1, 4, H, W] raw model output (4 classes incl. background)
@@ -280,11 +282,11 @@ def _decode_segmentation_masks(
 
     The 4-class model produces argmax values:
       0 → Background    (DISCARD — not sent to frontend)
-      1 → Upper_Incisor  → output index 0
-      2 → Labial_Bone    → output index 1
-      3 → Palatal_Bone   → output index 2
+      1 → Upper_incisor  → output index 0
+      2 → Labial_bone    → output index 1
+      3 → Palatal_bone   → output index 2
 
-    Frontend expects exactly 3 masks in order: [Upper_Incisor, Labial_Bone, Palatal_Bone].
+    Frontend expects exactly 3 masks in order: [Upper_incisor, Labial_bone, Palatal_bone].
     """
     # argmax over class dimension → [1, H, W] integer class map {0, 1, 2, 3}
     class_map = torch.argmax(logits, dim=1).cpu()[0].numpy().astype(np.uint8)  # [H, W]
@@ -294,9 +296,9 @@ def _decode_segmentation_masks(
 
     # Map model class indices to frontend output indices
     # argmax value 0 = Background → skip entirely
-    # argmax value 1 → output index 0 (Upper_Incisor)
-    # argmax value 2 → output index 1 (Labial_Bone)
-    # argmax value 3 → output index 2 (Palatal_Bone)
+    # argmax value 1 → output index 0 (Upper_incisor)
+    # argmax value 2 → output index 1 (Labial_bone)
+    # argmax value 3 → output index 2 (Palatal_bone)
     masks: list[np.ndarray] = []
     for argmax_val in [1, 2, 3]:  # skip 0 (Background)
         masks.append((class_map_native == argmax_val).astype(np.uint8))
@@ -549,25 +551,26 @@ class AnalysisService:
             self._landmark_model = lm
             print(f"[AnalysisService] Landmark model loaded: {landmark_ckpt_path.name}")
 
-        current_dir = Path(__file__).resolve()
-        possible_paths = [
-            current_dir.parents[3] / "best_model.pt", # Host root
-            current_dir.parents[2] / "best_model.pt", # Docker /app root
-            Path("/app/best_model.pt"),
-            Path("/app/backend/best_model.pt")
-        ]
-        seg_ckpt_path = next((p for p in possible_paths if p.exists()), possible_paths[0])
-
+# ── Segmentation model (DeepLabV3Plus — 4-class argmax) ──────────────
+        # Model path: prefer env USER_LOCAL_MODEL_PATH if set (user's local Mac copy),
+        # otherwise fall back to the trained server checkpoint.
+        seg_ckpt_path = (
+            Path(os.environ["USER_LOCAL_MODEL_PATH"])
+            if os.environ.get("USER_LOCAL_MODEL_PATH")
+            else ROOT / "models" / "finalDeepRun_deeplabv3plus_resnet34_lr0.0003_wd0.001_bs4x4_150ep_20260527_195758" / "best_model.pt"
+        )
         if not seg_ckpt_path.exists():
             print(
-                "[AnalysisService] WARNING: Segmentation checkpoint not found:\n"
-                f"  Tried: {list(map(str, possible_paths))}\n"
+                f"[AnalysisService] WARNING: Segmentation checkpoint not found: "
+                f"{seg_ckpt_path}\n"
                 "  Segmentation model unavailable.\n"
-                "  Verify: docker-compose.yml has './ceph-project:/app/ceph-project' volume mount."
+                "  Expected path inside container: /app/models/exp*/best_model.pt\n"
+                "  Or set USER_LOCAL_MODEL_PATH env var to your local .pt path.\n"
+                "  Verify: docker-compose.yml has './models:/app/models' volume mount."
             )
             self._seg_model = None
         else:
-            sm = _build_segmentation_model(4)
+            sm = _build_segmentation_model(4)   # ← 4 classes: Background + 3 foreground
             seg_state = torch.load(seg_ckpt_path, map_location=self._device, weights_only=False)
             cleaned_state = {k.replace('module.', ''): v for k, v in seg_state.items()}
             sm.load_state_dict(cleaned_state, strict=True)
