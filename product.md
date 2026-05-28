@@ -114,3 +114,4 @@ Push boundary precision for all segmentation classes — especially Upper_inciso
 - Plain-text terminal output, no markdown.
 | #0  | 0.5460  | 0.4351 | Unet          | watchdog update |
 | #3  | 0.5647  | 0.4634 | Unet          | watchdog update |
+| #38  | 0.5678  | 0.4664 | Unet          | watchdog update |
