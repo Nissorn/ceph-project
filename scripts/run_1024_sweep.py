@@ -1,30 +1,28 @@
 #!/usr/bin/env python3
 """
-Phase 2C 1024x1024 Segmentation Model Sweep
+Phase 2C.1 1024x1024 Segmentation Model Sweep — OPTIMIZED HYPERPARAMETERS
 
 Trains DeepLabV3+(ResNet50) then UNet++(ResNet50) sequentially.
 Both models use:
   - IMAGE_SIZE = (1024, 1024)
   - 4-class segmentation (Background=0, Upper_Incisor=1, Labial=2, Palatal=3)
   - AMP (torch.cuda.amp.autocast + GradScaler)
-  - Gradient Accumulation (effective batch size = 32)
-  - EarlyStopping patience = 15
-  - Max 100 epochs per model
+  - Gradient Accumulation (effective batch size = 64)
+  - Linear Warmup (10 epochs: 1e-5 → 1e-4) + Cosine Annealing
+  - EarlyStopping patience = 30
+  - Max 200 epochs per model
 
 GPU enforcement: ONLY GPUs 0, 1, 2, 3 are used.
-External PIDs on GPU 5 and other GPUs are never touched.
 
 Usage:
     python scripts/run_1024_sweep.py
-
-Output:
-    models/exp{run_id}_DeepLabV3Plus_resnet50_1024/  best_model.pt + config.json
-    models/exp{run_id}_UnetPlusPlus_resnet50_1024/  best_model.pt + config.json
 """
+
 from __future__ import annotations
 
 import json
 import logging
+import math
 import os
 import random
 import sys
@@ -39,6 +37,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 from torch.cuda.amp import autocast, GradScaler
 from torch.utils.data import DataLoader, Dataset
+from torch.optim.lr_scheduler import _LRScheduler
 
 import albumentations as A
 import cv2
@@ -59,7 +58,7 @@ DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 GPU_COUNT = torch.cuda.device_count()
 
 # ═══════════════════════════════════════════════════════════════════
-# CONFIG
+# CONFIG — PHASE 2C.1 OPTIMIZED
 # ═══════════════════════════════════════════════════════════════════
 POLYGON_CLASSES = ["Upper_incisor", "Labial_bone", "Palatal_bone"]
 NUM_CLASSES     = len(POLYGON_CLASSES) + 1   # +1 Background
@@ -67,15 +66,18 @@ CLASS_TO_IDX    = {cls: i + 1 for i, cls in enumerate(POLYGON_CLASSES)}
 
 IMAGE_SIZE      = (1024, 1024)
 BATCH_SIZE_PER_GPU = 4          # safe for V100 32GB @ 1024px with AMP
-ACCUMULATION_STEPS  = 2         # effective bs = 4 × 2(gpu) × 2(acc) = 16 ... wait 4×4×2=32
-# effective bs = BATCH_SIZE_PER_GPU × GPU_COUNT × ACCUMULATION_STEPS
+ACCUMULATION_STEPS  = 4         # effective bs = 4 × 4(gpu) × 4(acc) = 64
 EFFECTIVE_BS   = BATCH_SIZE_PER_GPU * GPU_COUNT * ACCUMULATION_STEPS
 
-LR          = 3e-4
+BASE_LR        = 1e-4           # reduced from 3e-4
+MIN_LR         = 1e-6           # for cosine annealing floor
+WARMUP_EPOCHS  = 10             # linear warmup
+WARMUP_START   = 1e-5           # starting LR during warmup
+
 WEIGHT_DECAY= 1e-3
 DICE_WEIGHT = 0.5
-MAX_EPOCHS  = 100
-PATIENCE    = 15
+MAX_EPOCHS  = 200               # increased from 100
+PATIENCE    = 30                # increased from 15
 SEED        = 42
 
 DATA_DIR    = PROJECT_ROOT / "data"
@@ -92,7 +94,38 @@ logging.basicConfig(
     datefmt="%H:%M:%S",
     handlers=[logging.StreamHandler(sys.stdout)],
 )
-log = logging.getLogger("p2c_sweep")
+log = logging.getLogger("p2c1_sweep")
+
+
+# ═══════════════════════════════════════════════════════════════════
+# SCHEDULER — Linear Warmup + Cosine Annealing
+# ═══════════════════════════════════════════════════════════════════
+class WarmupCosineScheduler(_LRScheduler):
+    """
+    Linear warmup for WARMUP_EPOCHS (from WARMUP_START to BASE_LR),
+    then Cosine Annealing from BASE_LR to MIN_LR over (total_epochs - warmup) epochs.
+    """
+    def __init__(self, optimizer, warmup_epochs, total_epochs,
+                 warmup_start=1e-5, base_lr=1e-4, min_lr=1e-6, last_epoch=-1):
+        self.warmup_epochs  = warmup_epochs
+        self.total_epochs  = total_epochs
+        self.warmup_start  = warmup_start
+        self.base_lr       = base_lr
+        self.min_lr        = min_lr
+        super().__init__(optimizer, last_epoch)
+
+    def get_lr(self):
+        epoch = self.last_epoch + 1  # 1-indexed for clarity
+        if epoch <= self.warmup_epochs:
+            # Linear interpolation: warmup_start → base_lr
+            alpha = (epoch - 1) / max(1, self.warmup_epochs - 1)
+            lr = self.warmup_start + (self.base_lr - self.warmup_start) * alpha
+        else:
+            # Cosine annealing: base_lr → min_lr
+            cosine_epochs = self.total_epochs - self.warmup_epochs
+            progress = (epoch - self.warmup_epochs - 1) / max(1, cosine_epochs - 1)
+            lr = self.min_lr + 0.5 * (self.base_lr - self.min_lr) * (1.0 + math.cos(math.pi * progress))
+        return [lr for _ in self.optimizer.param_groups]
 
 
 # ═══════════════════════════════════════════════════════════════════
@@ -155,7 +188,7 @@ class SegmentationDataset4Class(Dataset):
 
 
 # ═══════════════════════════════════════════════════════════════════
-# AUGMENTATION
+# AUGMENTATION — heavy (proven in Phase 2B)
 # ═══════════════════════════════════════════════════════════════════
 def build_aug():
     t = {f"mask{i}": "mask" for i in range(NUM_CLASSES - 1)}
@@ -170,6 +203,7 @@ def build_aug():
         ),
         A.GridDistortion(num_steps=5, distort_limit=0.15, p=0.2),
         A.OpticalDistortion(distort_limit=0.1, p=0.15),
+        A.CLAHE(clip_limit=2.0, tile_grid_size=(8, 8), p=0.3),
     ], additional_targets=t)
 
 
@@ -222,17 +256,28 @@ def compute_iou(pred, target, nc):
 
 
 # ═══════════════════════════════════════════════════════════════════
-# TRAINING LOOP with AMP + Gradient Accumulation
+# TRAINING LOOP — AMP + Gradient Accumulation + WarmupCosine
 # ═══════════════════════════════════════════════════════════════════
 def train_one_model(model, train_dl, val_dl, epochs, run_id, patience, accumulation_steps):
-    opt     = torch.optim.AdamW(model.parameters(), lr=LR, weight_decay=WEIGHT_DECAY)
-    sched   = torch.optim.lr_scheduler.CosineAnnealingLR(opt, T_max=epochs)
+    opt     = torch.optim.AdamW(model.parameters(), lr=BASE_LR, weight_decay=WEIGHT_DECAY)
+    scheduler = WarmupCosineScheduler(
+        opt,
+        warmup_epochs=WARMUP_EPOCHS,
+        total_epochs=epochs,
+        warmup_start=WARMUP_START,
+        base_lr=BASE_LR,
+        min_lr=MIN_LR,
+    )
     loss_fn = CrossEntropyDiceLoss(dice_weight=DICE_WEIGHT)
     scaler  = GradScaler()
 
     best_dice, patience_counter, best_state = 0.0, 0, None
 
     for ep in range(1, epochs + 1):
+        # Step the scheduler BEFORE the epoch so LR is correct for this epoch
+        scheduler.step()
+        current_lr = opt.param_groups[0]["lr"]
+
         model.train()
         t_loss  = 0.0
         n_steps = 0
@@ -245,7 +290,7 @@ def train_one_model(model, train_dl, val_dl, epochs, run_id, patience, accumulat
             with autocast():
                 out   = model(imgs)
                 loss  = loss_fn(out, masks)
-                loss  = loss / accumulation_steps   # scale loss for accumulation
+                loss  = loss / accumulation_steps
 
             scaler.scale(loss).backward()
             t_loss += loss.item() * accumulation_steps
@@ -261,8 +306,6 @@ def train_one_model(model, train_dl, val_dl, epochs, run_id, patience, accumulat
             scaler.step(opt)
             scaler.update()
             opt.zero_grad()
-
-        sched.step()
 
         # Validate
         model.eval()
@@ -280,14 +323,15 @@ def train_one_model(model, train_dl, val_dl, epochs, run_id, patience, accumulat
         iou  = float(np.mean(iou_list))
         avg_loss = t_loss / n_steps
 
+        warmup_note = " [WARMUP]" if ep <= WARMUP_EPOCHS else ""
         log.info(
-            "  Ep %d/%d | loss=%.4f | dice=%.4f | iou=%.4f | lr=%.2e",
-            ep, epochs, avg_loss, dice, iou, opt.param_groups[0]["lr"],
+            "  Ep %d/%d | loss=%.4f | dice=%.4f | iou=%.4f | lr=%.2e%s",
+            ep, epochs, avg_loss, dice, iou, current_lr, warmup_note,
         )
 
         if dice > best_dice:
-            best_dice      = dice
-            best_state     = {k: v.cpu().clone() for k, v in model.state_dict().items()}
+            best_dice        = dice
+            best_state       = {k: v.cpu().clone() for k, v in model.state_dict().items()}
             patience_counter = 0
         else:
             patience_counter += 1
@@ -334,10 +378,12 @@ def build_model(arch_name):
 # ═══════════════════════════════════════════════════════════════════
 def main():
     log.info("=" * 68)
-    log.info("PHASE 2C  SWEEP  —  1024x1024  |  DeepLabV3+  vs  U-Net++")
+    log.info("PHASE 2C.1 SWEEP — 1024x1024 OPTIMIZED | DeepLabV3+ vs UNet++")
     log.info("=" * 68)
-    log.info("GPUs: %d (strict: %s) | Eff.bs=%d | img=%s | amp=ON | grad_acc=%d",
-             GPU_COUNT, ALLOWED_GPUS, EFFECTIVE_BS, IMAGE_SIZE, ACCUMULATION_STEPS)
+    log.info("GPUs: %d | Eff.bs=%d | img=%s | amp=ON | grad_acc=%d",
+             GPU_COUNT, EFFECTIVE_BS, IMAGE_SIZE, ACCUMULATION_STEPS)
+    log.info("LR: %.0e → %.0e (warmup %dep) → cosine | max_ep=%d | patience=%d",
+             WARMUP_START, BASE_LR, WARMUP_EPOCHS, MAX_EPOCHS, PATIENCE)
 
     # ── Load & split data ─────────────────────────────────────────
     log.info("Loading annotations via parse_all_cvat_batches ...")
@@ -380,7 +426,7 @@ def main():
         log.info("  TRAINING: %s (resnet50) @ %s", arch, IMAGE_SIZE)
         log.info("=" * 68)
 
-        run_id = f"exp{RUN_TS}_{arch}_resnet50_1024"
+        run_id = f"exp{RUN_TS}_{arch}_resnet50_1024_opt"
         ckpt_dir = MODEL_OUT / run_id
         ckpt_dir.mkdir(parents=True, exist_ok=True)
 
@@ -402,12 +448,15 @@ def main():
         torch.save(model.state_dict(), ckpt_dir / "best_model.pt")
 
         cfg = {
-            "experiment_type": "phase2c_1024_sweep",
+            "experiment_type": "phase2c1_1024_optimized",
             "run_id": run_id,
             "arch_name": arch,
             "encoder_name": "resnet50",
             "image_size": list(IMAGE_SIZE),
-            "lr": LR,
+            "lr_base": BASE_LR,
+            "lr_min": MIN_LR,
+            "warmup_epochs": WARMUP_EPOCHS,
+            "warmup_start_lr": WARMUP_START,
             "weight_decay": WEIGHT_DECAY,
             "batch_size_per_gpu": BATCH_SIZE_PER_GPU,
             "gradient_accumulation_steps": ACCUMULATION_STEPS,
@@ -439,12 +488,8 @@ def main():
         torch.cuda.empty_cache()
 
     log.info("=" * 68)
-    log.info("  PHASE 2C SWEEP COMPLETE — both models trained.")
+    log.info("  PHASE 2C.1 SWEEP COMPLETE — both models trained.")
     log.info("=" * 68)
-    log.info(
-        "  DeepLabV3Plus & UnetPlusPlus results saved under models/exp%s_*_1024/",
-        RUN_TS,
-    )
 
 
 if __name__ == "__main__":
