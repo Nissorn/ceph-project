@@ -676,20 +676,36 @@ class AnalysisService:
 
 # ── Segmentation model (DeepLabV3Plus — 4-class argmax) ──────────────
         # Model path: prefer env USER_LOCAL_MODEL_PATH if set (user's local Mac copy),
-        # otherwise fall back to the trained server checkpoint.
-        seg_ckpt_path = (
-            Path(os.environ["USER_LOCAL_MODEL_PATH"])
-            if os.environ.get("USER_LOCAL_MODEL_PATH")
-            else ROOT / "models" / "finalDeepRun_deeplabv3plus_resnet34_lr0.0003_wd0.001_bs4x4_150ep_20260527_195758" / "best_model.pt"
-        )
-        if not seg_ckpt_path.exists():
+        # otherwise look in standard locations.
+        seg_ckpt_path = None
+        candidates = []
+        if os.environ.get("USER_LOCAL_MODEL_PATH"):
+            p = Path(os.environ["USER_LOCAL_MODEL_PATH"])
+            candidates.append(p)
+            if p.exists():
+                seg_ckpt_path = p
+        else:
+            candidates = [
+                ROOT / "best_model.pt",                          # In Docker: /app/best_model.pt
+                ROOT / "backend" / "best_model.pt",              # On host: repo_root/backend/best_model.pt
+                ROOT / "models" / "best_model.pt",
+            ]
+            models_dir = ROOT / "models"
+            if models_dir.exists():
+                candidates.extend(sorted(models_dir.glob("**/best_model.pt")))
+            
+            for c in candidates:
+                if c.exists():
+                    seg_ckpt_path = c
+                    break
+
+        if not seg_ckpt_path or not seg_ckpt_path.exists():
             print(
-                f"[AnalysisService] WARNING: Segmentation checkpoint not found: "
-                f"{seg_ckpt_path}\n"
+                f"[AnalysisService] WARNING: Segmentation checkpoint not found.\n"
+                "  Candidates searched: " + ", ".join(str(c) for c in candidates) + "\n"
                 "  Segmentation model unavailable.\n"
-                "  Expected path inside container: /app/models/exp*/best_model.pt\n"
-                "  Or set USER_LOCAL_MODEL_PATH env var to your local .pt path.\n"
-                "  Verify: docker-compose.yml has './models:/app/models' volume mount."
+                "  Expected path inside container: /app/best_model.pt\n"
+                "  Or set USER_LOCAL_MODEL_PATH env var to your local .pt path."
             )
             self._seg_model = None
         else:
