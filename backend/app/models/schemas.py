@@ -37,11 +37,17 @@ class MaskOverlapDiagnostic(BaseModel):
 class Metrics(BaseModel):
     u1_pp_angle_deg: float
     labial_crest_mm: float
+    labial_crest_severity: str
     labial_midroot_mm: float
+    labial_midroot_severity: str
     labial_apex_mm: float
+    labial_apex_severity: str
     palatal_crest_mm: float
+    palatal_crest_severity: str
     palatal_midroot_mm: float
+    palatal_midroot_severity: str
     palatal_apex_mm: float
+    palatal_apex_severity: str
     bone_thickness_type: str
     bone_thickness_interpretation: str
     root_apex_position_type: str
@@ -66,16 +72,17 @@ class SegmentationData(BaseModel):
 
 
 class AnalysisResultData(BaseModel):
-    image_id: str
-    landmarks: List[LandmarkPoint]
-    raw_landmarks: List[LandmarkPoint]
-    segmentation: SegmentationData
-    snapping: Dict[str, Any]
-    mask_overlap_diagnostic: MaskOverlapDiagnostic
+    image_id: Optional[str] = None
+    landmarks: Optional[List[LandmarkPoint]] = None
+    raw_landmarks: Optional[List[LandmarkPoint]] = None
+    segmentation: Optional[SegmentationData] = None
+    snapping: Optional[Dict[str, Any]] = None
+    mask_overlap_diagnostic: Optional[MaskOverlapDiagnostic] = None
     metrics: Metrics
     _debug: Optional[DebugInfo] = None
 
 
 class AnalysisResponse(BaseModel):
     status: str
+    disclaimer: str
     data: AnalysisResultData

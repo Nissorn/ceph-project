@@ -102,6 +102,11 @@ CLASS_UPPER_INCISOR   = 1
 CLASS_LABIAL_BONE     = 2
 CLASS_PALATAL_BONE    = 3
 
+# Decoded masks list is length 3: [Upper_incisor, Labial_bone, Palatal_bone]
+MASK_IDX_INCISOR      = 0
+MASK_IDX_LABIAL       = 1
+MASK_IDX_PALATAL      = 2
+
 # ── model builders (mirrors src/phase2/inference.py) ────────────────────────
 
 def _build_landmark_model() -> torch.nn.Module:
@@ -338,8 +343,8 @@ def _project_point_onto_contour(pt: np.ndarray, contour: np.ndarray) -> np.ndarr
 
 def _snap_crest_points(coords: np.ndarray, masks: list[np.ndarray]) -> tuple[np.ndarray, dict]:
     snapped = coords.copy()
-    labial_contour  = _contour_from_mask(masks[CLASS_LABIAL_BONE])
-    palatal_contour = _contour_from_mask(masks[CLASS_PALATAL_BONE])
+    labial_contour  = _contour_from_mask(masks[MASK_IDX_LABIAL])
+    palatal_contour = _contour_from_mask(masks[MASK_IDX_PALATAL])
     diag = {}
 
     for idx, name, contour in [(3, "Labial_crest", labial_contour), (5, "Palatal_crest", palatal_contour)]:
@@ -370,7 +375,7 @@ def _snap_crest_points(coords: np.ndarray, masks: list[np.ndarray]) -> tuple[np.
 
 def _snap_midroot_points(coords: np.ndarray, masks: list[np.ndarray]) -> tuple[np.ndarray, dict]:
     snapped = coords.copy()
-    incisor_contour = _contour_from_mask(masks[CLASS_UPPER_INCISOR])
+    incisor_contour = _contour_from_mask(masks[MASK_IDX_INCISOR])
     diag = {}
 
     if incisor_contour is None:
@@ -407,7 +412,7 @@ def _snap_midroot_points(coords: np.ndarray, masks: list[np.ndarray]) -> tuple[n
 
 def _snap_ans_pns(coords: np.ndarray, masks: list[np.ndarray]) -> tuple[np.ndarray, dict]:
     snapped = coords.copy()
-    palatal_contour = _contour_from_mask(masks[CLASS_PALATAL_BONE])
+    palatal_contour = _contour_from_mask(masks[MASK_IDX_PALATAL])
     diag = {}
 
     for idx, name in [(6, "ANS"), (7, "PNS")]:
@@ -496,6 +501,21 @@ def _get_u1_perp(u1_unit: np.ndarray) -> np.ndarray:
     if u1_perp[0] < 0:
         u1_perp = -u1_perp
     return u1_perp
+
+
+def _get_distance_severity(val: float) -> str:
+    """
+    Returns the severity status based on the distance value:
+    - If distance >= 1.0: "Monitor"
+    - If 0.5 <= distance < 1.0: "Warning"
+    - If distance < 0.5: "Critical"
+    """
+    if val >= 1.0:
+        return "Monitor"
+    elif val >= 0.5:
+        return "Warning"
+    else:
+        return "Critical"
 
 
 def _get_bone_thickness_at_point(bone_mask: np.ndarray, start_pt: np.ndarray, direction: np.ndarray, max_dist_px: float = 200.0) -> float:
@@ -737,11 +757,17 @@ class AnalysisService:
                 "metrics": {
                     "u1_pp_angle_deg": 112.5,
                     "labial_crest_mm": 1.2,
+                    "labial_crest_severity": "Monitor",
                     "labial_midroot_mm": 1.5,
+                    "labial_midroot_severity": "Monitor",
                     "labial_apex_mm": 1.0,
+                    "labial_apex_severity": "Monitor",
                     "palatal_crest_mm": 1.4,
+                    "palatal_crest_severity": "Monitor",
                     "palatal_midroot_mm": 1.6,
+                    "palatal_midroot_severity": "Monitor",
                     "palatal_apex_mm": 1.1,
+                    "palatal_apex_severity": "Monitor",
                     "bone_thickness_type": "Type 1 – Thick",
                     "bone_thickness_interpretation": "Thick alveolar bone; Favorable bone support.",
                     "root_apex_position_type": "Midway",
@@ -790,9 +816,9 @@ class AnalysisService:
         snapping_diag = {**crest_diag, **midroot_diag, **ans_pns_diag}
 
         # ── Step 6: Polygon boundary extraction ────────────────────────────
-        poly_incisor = _mask_to_polygon(corrected_masks[CLASS_UPPER_INCISOR])
-        poly_labial  = _mask_to_polygon(corrected_masks[CLASS_LABIAL_BONE])
-        poly_palatal = _mask_to_polygon(corrected_masks[CLASS_PALATAL_BONE])
+        poly_incisor = _mask_to_polygon(corrected_masks[MASK_IDX_INCISOR])
+        poly_labial  = _mask_to_polygon(corrected_masks[MASK_IDX_LABIAL])
+        poly_palatal = _mask_to_polygon(corrected_masks[MASK_IDX_PALATAL])
 
         # ── Step 7: Biomechanical angle (from raw coords — snapping disabled) ──
         u1_pp_angle_deg = _compute_u1_pp_angle_deg(raw_coords_orig)
@@ -822,7 +848,7 @@ class AnalysisService:
         labial_crest_pt = raw_coords_orig[3]
         t_lc = np.dot(labial_crest_pt - tip, u1_unit)
         P_axis_lc = tip + t_lc * u1_unit
-        P_tooth_lc = _find_tooth_boundary(corrected_masks[CLASS_UPPER_INCISOR], P_axis_lc, u1_perp, max_dist_px=100.0)
+        P_tooth_lc = _find_tooth_boundary(corrected_masks[MASK_IDX_INCISOR], P_axis_lc, u1_perp, max_dist_px=100.0)
         labial_crest_px = np.linalg.norm(np.dot(labial_crest_pt - P_tooth_lc, u1_perp))
         labial_crest_mm = float(labial_crest_px * mm_per_pixel)
 
@@ -830,13 +856,13 @@ class AnalysisService:
         palatal_crest_pt = raw_coords_orig[5]
         t_pc = np.dot(palatal_crest_pt - tip, u1_unit)
         P_axis_pc = tip + t_pc * u1_unit
-        P_tooth_pc = _find_tooth_boundary(corrected_masks[CLASS_UPPER_INCISOR], P_axis_pc, -u1_perp, max_dist_px=100.0)
+        P_tooth_pc = _find_tooth_boundary(corrected_masks[MASK_IDX_INCISOR], P_axis_pc, -u1_perp, max_dist_px=100.0)
         palatal_crest_px = np.linalg.norm(np.dot(P_tooth_pc - palatal_crest_pt, u1_perp))
         palatal_crest_mm = float(palatal_crest_px * mm_per_pixel)
 
         # 2. Labial Midroot Distance
         labial_midroot_pt = raw_coords_orig[2]
-        labial_midroot_px = _get_bone_thickness_at_point(corrected_masks[CLASS_LABIAL_BONE], labial_midroot_pt, u1_perp, max_dist_px=150.0)
+        labial_midroot_px = _get_bone_thickness_at_point(corrected_masks[MASK_IDX_LABIAL], labial_midroot_pt, u1_perp, max_dist_px=150.0)
         if labial_midroot_px <= 0:
             # Interpolation fallback between crest and apex
             t_crest = np.dot(raw_coords_orig[3] - tip, u1_unit)
@@ -852,7 +878,7 @@ class AnalysisService:
 
         # 5. Palatal Midroot Distance
         palatal_midroot_pt = raw_coords_orig[4]
-        palatal_midroot_px = _get_bone_thickness_at_point(corrected_masks[CLASS_PALATAL_BONE], palatal_midroot_pt, -u1_perp, max_dist_px=150.0)
+        palatal_midroot_px = _get_bone_thickness_at_point(corrected_masks[MASK_IDX_PALATAL], palatal_midroot_pt, -u1_perp, max_dist_px=150.0)
         if palatal_midroot_px <= 0:
             # Interpolation fallback between crest and apex
             t_crest = np.dot(raw_coords_orig[5] - tip, u1_unit)
@@ -875,6 +901,14 @@ class AnalysisService:
         palatal_apex_pt = raw_coords_orig[9]
         palatal_apex_px = np.linalg.norm(np.dot(apex - palatal_apex_pt, u1_perp))
         palatal_apex_mm = float(palatal_apex_px * mm_per_pixel)
+
+        # Calculate severity flags for the six distances
+        labial_crest_sev = _get_distance_severity(labial_crest_mm)
+        labial_midroot_sev = _get_distance_severity(labial_midroot_mm)
+        labial_apex_sev = _get_distance_severity(labial_apex_mm)
+        palatal_crest_sev = _get_distance_severity(palatal_crest_mm)
+        palatal_midroot_sev = _get_distance_severity(palatal_midroot_mm)
+        palatal_apex_sev = _get_distance_severity(palatal_apex_mm)
 
         # ── Step 7.6: Alveolar Bone Thickness Classification (Zhang et al. 2021) ──
         # Define "Thin" as strictly < 0.5 mm and "Thick" as >= 0.5 mm to avoid edge-case None classifications
@@ -910,15 +944,23 @@ class AnalysisService:
             root_apex_position_type = "Palatal"
 
         # ── Step 7.8: Biomechanical Retraction Strategy ──
-        # Single standardized threshold: < 105, 105 - 115, and > 115
-        if u1_pp_angle_deg < 105.0:
+        # Exact bounds for General Retraction Strategy based on U1-PP:
+        # - <= 105.0: "Root torque + retraction"
+        # - 105.1 to 109.9: "Translation movement"
+        # - >= 110.0: "Controlled tipping"
+        if u1_pp_angle_deg <= 105.0:
             general_retraction = "Root torque + retraction (Maximum movement limited by PB distance)"
-            angle_zone = "<105"
-        elif u1_pp_angle_deg <= 115.0:
+        elif u1_pp_angle_deg < 110.0:
             general_retraction = "Translation movement (Maximum movement limited by PB distance)"
-            angle_zone = "105-115"
         else:
             general_retraction = "Controlled tipping (Maximum movement limited by PB distance)"
+
+        # Angle zone for the Zhang et al. 2021 detailed matrix lookup
+        if u1_pp_angle_deg < 105.0:
+            angle_zone = "<105"
+        elif u1_pp_angle_deg <= 115.0:
+            angle_zone = "105-115"
+        else:
             angle_zone = ">115"
 
         # ── Step 7.9: Detailed Biomechanics Matrix ──
@@ -999,15 +1041,15 @@ class AnalysisService:
             "segmentation": {
                 "Upper_incisor": {
                     "polygon": [[float(x), float(y)] for x, y in poly_incisor] if poly_incisor else [],
-                    "pixel_count": int(corrected_masks[CLASS_UPPER_INCISOR].sum()),
+                    "pixel_count": int(corrected_masks[MASK_IDX_INCISOR].sum()),
                 },
                 "Labial_bone": {
                     "polygon": [[float(x), float(y)] for x, y in poly_labial] if poly_labial else [],
-                    "pixel_count": int(corrected_masks[CLASS_LABIAL_BONE].sum()),
+                    "pixel_count": int(corrected_masks[MASK_IDX_LABIAL].sum()),
                 },
                 "Palatal_bone": {
                     "polygon": [[float(x), float(y)] for x, y in poly_palatal] if poly_palatal else [],
-                    "pixel_count": int(corrected_masks[CLASS_PALATAL_BONE].sum()),
+                    "pixel_count": int(corrected_masks[MASK_IDX_PALATAL].sum()),
                 },
             },
             "snapping": snapping_diag,
@@ -1015,11 +1057,17 @@ class AnalysisService:
             "metrics": {
                 "u1_pp_angle_deg": float(u1_pp_angle_deg),
                 "labial_crest_mm": float(round(labial_crest_mm, 3)),
+                "labial_crest_severity": labial_crest_sev,
                 "labial_midroot_mm": float(round(labial_midroot_mm, 3)),
+                "labial_midroot_severity": labial_midroot_sev,
                 "labial_apex_mm": float(round(labial_apex_mm, 3)),
+                "labial_apex_severity": labial_apex_sev,
                 "palatal_crest_mm": float(round(palatal_crest_mm, 3)),
+                "palatal_crest_severity": palatal_crest_sev,
                 "palatal_midroot_mm": float(round(palatal_midroot_mm, 3)),
+                "palatal_midroot_severity": palatal_midroot_sev,
                 "palatal_apex_mm": float(round(palatal_apex_mm, 3)),
+                "palatal_apex_severity": palatal_apex_sev,
                 "bone_thickness_type": bone_thickness_type,
                 "bone_thickness_interpretation": bone_thickness_interpretation,
                 "root_apex_position_type": root_apex_position_type,

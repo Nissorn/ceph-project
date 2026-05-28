@@ -34,4 +34,8 @@ async def analyze_endpoint(file: UploadFile = File(...)):
         raise HTTPException(status_code=500, detail=f"Analysis pipeline error: {e}")
 
     # Wrap in AnalysisResponse
-    return AnalysisResponse(status=result["status"], data=result)
+    return AnalysisResponse(
+        status=result["status"],
+        disclaimer="Estimation model based on lateral 2D cephalometric imaging. Must not be considered a replacement for CBCT evaluation.",
+        data=result
+    )

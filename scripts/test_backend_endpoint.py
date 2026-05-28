@@ -98,34 +98,46 @@ def _audit_response(payload: dict) -> tuple[bool, list[str]]:
     errors = []
     data = payload.get("data", {})
 
-    # 1. status
-    if payload.get("status") not in ("ok", "success"):
-        errors.append(f"Unexpected status: {payload.get('status')}")
+    status = payload.get("status")
+    if status not in ("ok", "success", "degraded"):
+        errors.append(f"Unexpected status: {status}")
+
+    expected_disclaimer = "Estimation model based on lateral 2D cephalometric imaging. Must not be considered a replacement for CBCT evaluation."
+    actual_disclaimer = payload.get("disclaimer")
+    if actual_disclaimer != expected_disclaimer:
+        errors.append(f"Expected disclaimer {expected_disclaimer!r}, got {actual_disclaimer!r}")
 
     # 2. landmarks (10 pts)
-    lmks = data.get("landmarks", [])
-    if len(lmks) != 10:
-        errors.append(f"Expected 10 landmarks, got {len(lmks)}")
-    else:
-        names = {lp["name"] for lp in lmks}
-        missing = REQUIRED_LANDMARK_NAMES - names
-        if missing:
-            errors.append(f"Missing landmark names: {missing}")
+    lmks = data.get("landmarks")
+    if lmks is not None or status != "degraded":
+        if not isinstance(lmks, list) or len(lmks) != 10:
+            errors.append(f"Expected 10 landmarks, got {lmks}")
+        else:
+            names = {lp["name"] for lp in lmks}
+            missing = REQUIRED_LANDMARK_NAMES - names
+            if missing:
+                errors.append(f"Missing landmark names: {missing}")
 
     # 3. segmentation (3 classes, each with polygon + pixel_count)
-    seg = data.get("segmentation", {})
-    for cls_name in REQUIRED_SEG_CLASSES:
-        cls_data = seg.get(cls_name, {})
-        if "polygon" not in cls_data:
-            errors.append(f"segmentation.{cls_name} missing 'polygon'")
-        if "pixel_count" not in cls_data:
-            errors.append(f"segmentation.{cls_name} missing 'pixel_count'")
+    seg = data.get("segmentation")
+    if seg is not None or status != "degraded":
+        if not isinstance(seg, dict):
+            errors.append(f"Expected dict for segmentation, got {seg}")
+        else:
+            for cls_name in REQUIRED_SEG_CLASSES:
+                cls_data = seg.get(cls_name, {})
+                if "polygon" not in cls_data:
+                    errors.append(f"segmentation.{cls_name} missing 'polygon'")
+                if "pixel_count" not in cls_data:
+                    errors.append(f"segmentation.{cls_name} missing 'pixel_count'")
 
     # 4. metrics check
     metrics = data.get("metrics", {})
     required_metric_fields = [
         "u1_pp_angle_deg", "labial_crest_mm", "labial_midroot_mm", "labial_apex_mm",
         "palatal_crest_mm", "palatal_midroot_mm", "palatal_apex_mm",
+        "labial_crest_severity", "labial_midroot_severity", "labial_apex_severity",
+        "palatal_crest_severity", "palatal_midroot_severity", "palatal_apex_severity",
         "bone_thickness_type", "bone_thickness_interpretation", "root_apex_position_type",
         "general_retraction_strategy", "preferred_biomechanics", "biomechanics_to_avoid", "clinical_implication"
     ]
@@ -176,10 +188,13 @@ def main():
         sys.exit(1)
     else:
         angle = payload["data"]["metrics"]["u1_pp_angle_deg"]
-        lm_count = len(payload["data"]["landmarks"])
-        seg_classes = list(payload["data"]["segmentation"].keys())
+        landmarks = payload["data"].get("landmarks")
+        lm_count = len(landmarks) if landmarks is not None else 0
+        seg = payload["data"].get("segmentation")
+        seg_classes = list(seg.keys()) if seg is not None else []
         print(f"[test_backend_endpoint] AUDIT PASSED")
-        print(f"  landmarks returned : {lm_count}/10")
+        print(f"  status               : {payload.get('status')}")
+        print(f"  landmarks returned : {lm_count}")
         print(f"  segmentation classes: {seg_classes}")
         print(f"  u1_pp_angle_deg      : {angle}°")
         print("\n=== VALIDATION RESULT: PASS ===")

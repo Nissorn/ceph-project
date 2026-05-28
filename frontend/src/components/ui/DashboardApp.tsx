@@ -183,13 +183,19 @@ export default function DashboardApp() {
         u1_pp_desc = 'Proclined';
       }
 
-      // Extract new 6 distances in mm
+      // Extract new 6 distances in mm and their severity levels
       const labial_crest = Number((payload.metrics?.labial_crest_mm ?? 1.2).toFixed(2));
+      const labial_crest_severity = payload.metrics?.labial_crest_severity ?? 'Monitor';
       const labial_midroot = Number((payload.metrics?.labial_midroot_mm ?? 1.5).toFixed(2));
+      const labial_midroot_severity = payload.metrics?.labial_midroot_severity ?? 'Monitor';
       const labial_apex = Number((payload.metrics?.labial_apex_mm ?? 1.0).toFixed(2));
+      const labial_apex_severity = payload.metrics?.labial_apex_severity ?? 'Monitor';
       const palatal_crest = Number((payload.metrics?.palatal_crest_mm ?? 1.4).toFixed(2));
+      const palatal_crest_severity = payload.metrics?.palatal_crest_severity ?? 'Monitor';
       const palatal_midroot = Number((payload.metrics?.palatal_midroot_mm ?? 1.6).toFixed(2));
+      const palatal_midroot_severity = payload.metrics?.palatal_midroot_severity ?? 'Monitor';
       const palatal_apex = Number((payload.metrics?.palatal_apex_mm ?? 1.1).toFixed(2));
+      const palatal_apex_severity = payload.metrics?.palatal_apex_severity ?? 'Monitor';
 
       const bone_thickness_type = payload.metrics?.bone_thickness_type ?? 'Type 1 – Thick';
       const bone_thickness_interpretation = payload.metrics?.bone_thickness_interpretation ?? 'Thick alveolar bone; Favorable bone support.';
@@ -204,11 +210,17 @@ export default function DashboardApp() {
         u1_pp_status,
         u1_pp_desc,
         labial_crest,
+        labial_crest_severity,
         labial_midroot,
+        labial_midroot_severity,
         labial_apex,
+        labial_apex_severity,
         palatal_crest,
+        palatal_crest_severity,
         palatal_midroot,
+        palatal_midroot_severity,
         palatal_apex,
+        palatal_apex_severity,
         bone_thickness_type,
         bone_thickness_interpretation,
         root_apex_position_type,
@@ -382,9 +394,9 @@ export default function DashboardApp() {
                     <div className="text-center text-[10px] font-bold text-slate-400 dark:text-slate-500 border-b border-slate-200 dark:border-slate-700/60 pb-1.5 uppercase tracking-wide">
                       Labial Plate
                     </div>
-                    <DistanceItem label="Crest" value={results.labial_crest} />
-                    <DistanceItem label="Midroot" value={results.labial_midroot} />
-                    <DistanceItem label="Apex (LB)" value={results.labial_apex} />
+                    <DistanceItem label="Crest" value={results.labial_crest} severity={results.labial_crest_severity} />
+                    <DistanceItem label="Midroot" value={results.labial_midroot} severity={results.labial_midroot_severity} />
+                    <DistanceItem label="Apex (LB)" value={results.labial_apex} severity={results.labial_apex_severity} />
                   </div>
 
                   {/* Palatal Column */}
@@ -392,9 +404,9 @@ export default function DashboardApp() {
                     <div className="text-center text-[10px] font-bold text-slate-400 dark:text-slate-500 border-b border-slate-200 dark:border-slate-700/60 pb-1.5 uppercase tracking-wide">
                       Palatal Plate
                     </div>
-                    <DistanceItem label="Crest" value={results.palatal_crest} />
-                    <DistanceItem label="Midroot" value={results.palatal_midroot} />
-                    <DistanceItem label="Apex (PB)" value={results.palatal_apex} />
+                    <DistanceItem label="Crest" value={results.palatal_crest} severity={results.palatal_crest_severity} />
+                    <DistanceItem label="Midroot" value={results.palatal_midroot} severity={results.palatal_midroot_severity} />
+                    <DistanceItem label="Apex (PB)" value={results.palatal_apex} severity={results.palatal_apex_severity} />
                   </div>
                 </div>
               </div>
