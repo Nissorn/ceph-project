@@ -178,53 +178,81 @@ export default function CephCanvasEditor({
   );
 
   // ── Geometry: Visual Guides (U1 and PP lines, measurement projections) ─────
+  // NOTE: `img` is listed as a dep even though it's accessed through `toContent`
+  // to guarantee recomputation when the image loads (and fitScale changes).
   const u1Line = useMemo(() => {
-    const upperTip = keypoints.find(k => k.name === 'Upper_tip');
-    const upperApex = keypoints.find(k => k.name === 'Upper_apex');
-    if (!upperTip || !upperApex) return null;
-    const dx = upperApex.x - upperTip.x;
-    const dy = upperApex.y - upperTip.y;
-    // Extend past tip by 15% and apex by 30% (upwards)
-    const p1 = [upperTip.x - dx * 0.15, upperTip.y - dy * 0.15];
-    const p2 = [upperApex.x + dx * 0.3, upperApex.y + dy * 0.3];
-    const [cx1, cy1] = toContent(p1[0], p1[1]);
-    const [cx2, cy2] = toContent(p2[0], p2[1]);
-    return [cx1, cy1, cx2, cy2];
-  }, [keypoints, toContent]);
+    try {
+      if (!img) return null;
+      const upperTip = keypoints.find(k => k.name === 'Upper_tip');
+      const upperApex = keypoints.find(k => k.name === 'Upper_apex');
+      if (!upperTip || !upperApex) return null;
+      const dx = upperApex.x - upperTip.x;
+      const dy = upperApex.y - upperTip.y;
+      const p1 = [upperTip.x - dx * 0.15, upperTip.y - dy * 0.15];
+      const p2 = [upperApex.x + dx * 0.3, upperApex.y + dy * 0.3];
+      const [cx1, cy1] = toContent(p1[0], p1[1]);
+      const [cx2, cy2] = toContent(p2[0], p2[1]);
+      if (!Number.isFinite(cx1) || !Number.isFinite(cy1)) return null;
+      return [cx1, cy1, cx2, cy2];
+    } catch (err) {
+      console.warn('[CephEditor] u1Line computation failed:', err);
+      return null;
+    }
+  }, [img, keypoints, toContent]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const ppLine = useMemo(() => {
-    const ans = keypoints.find(k => k.name === 'ANS');
-    const pns = keypoints.find(k => k.name === 'PNS');
-    if (!ans || !pns) return null;
-    const dx = pns.x - ans.x;
-    const dy = pns.y - ans.y;
-    // Extend past both by 20%
-    const p1 = [ans.x - dx * 0.2, ans.y - dy * 0.2];
-    const p2 = [pns.x + dx * 0.2, pns.y + dy * 0.2];
-    const [cx1, cy1] = toContent(p1[0], p1[1]);
-    const [cx2, cy2] = toContent(p2[0], p2[1]);
-    return [cx1, cy1, cx2, cy2];
-  }, [keypoints, toContent]);
+    try {
+      if (!img) return null;
+      const ans = keypoints.find(k => k.name === 'ANS');
+      const pns = keypoints.find(k => k.name === 'PNS');
+      if (!ans || !pns) return null;
+      const dx = pns.x - ans.x;
+      const dy = pns.y - ans.y;
+      const p1 = [ans.x - dx * 0.2, ans.y - dy * 0.2];
+      const p2 = [pns.x + dx * 0.2, pns.y + dy * 0.2];
+      const [cx1, cy1] = toContent(p1[0], p1[1]);
+      const [cx2, cy2] = toContent(p2[0], p2[1]);
+      if (!Number.isFinite(cx1) || !Number.isFinite(cy1)) return null;
+      return [cx1, cy1, cx2, cy2];
+    } catch (err) {
+      console.warn('[CephEditor] ppLine computation failed:', err);
+      return null;
+    }
+  }, [img, keypoints, toContent]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const visualProjectionLines = useMemo(() => {
-    if (!measurementLines) return [];
-    const lines = [
-      { line: measurementLines.labial_crest_line, color: '#f59e0b' },
-      { line: measurementLines.labial_midroot_line, color: '#ef4444' },
-      { line: measurementLines.labial_apex_line, color: '#ef4444' },
-      { line: measurementLines.palatal_crest_line, color: '#f59e0b' },
-      { line: measurementLines.palatal_midroot_line, color: '#ef4444' },
-      { line: measurementLines.palatal_apex_line, color: '#ef4444' },
-    ];
-    return lines
-      .filter(item => item.line && item.line.length === 2)
-      .map(item => {
-        const [p1, p2] = item.line;
-        const [cx1, cy1] = toContent(p1[0], p1[1]);
-        const [cx2, cy2] = toContent(p2[0], p2[1]);
-        return { points: [cx1, cy1, cx2, cy2], color: item.color };
-      });
-  }, [measurementLines, toContent]);
+    try {
+      if (!measurementLines || !img) return [];
+      const lines = [
+        { line: measurementLines.labial_crest_line,    color: '#f59e0b' },
+        { line: measurementLines.labial_midroot_line,  color: '#ef4444' },
+        { line: measurementLines.labial_apex_line,     color: '#ef4444' },
+        { line: measurementLines.palatal_crest_line,   color: '#f59e0b' },
+        { line: measurementLines.palatal_midroot_line, color: '#ef4444' },
+        { line: measurementLines.palatal_apex_line,    color: '#ef4444' },
+      ];
+      const result: { points: number[]; color: string }[] = [];
+      for (const item of lines) {
+        if (
+          !Array.isArray(item.line) || item.line.length !== 2 ||
+          !Array.isArray(item.line[0]) || item.line[0].length < 2 ||
+          !Array.isArray(item.line[1]) || item.line[1].length < 2
+        ) continue;
+        const [x1r, y1r] = item.line[0];
+        const [x2r, y2r] = item.line[1];
+        if (!Number.isFinite(x1r) || !Number.isFinite(y1r) ||
+            !Number.isFinite(x2r) || !Number.isFinite(y2r)) continue;
+        const [cx1, cy1] = toContent(x1r, y1r);
+        const [cx2, cy2] = toContent(x2r, y2r);
+        if (!Number.isFinite(cx1) || !Number.isFinite(cy1)) continue;
+        result.push({ points: [cx1, cy1, cx2, cy2], color: item.color });
+      }
+      return result;
+    } catch (err) {
+      console.warn('[CephEditor] visualProjectionLines computation failed:', err);
+      return [];
+    }
+  }, [img, measurementLines, toContent]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // ── Propagate changes upward ──────────────────────────────────────────────────
   useEffect(() => { onKeypointsChange?.(keypoints); }, [keypoints]); // eslint-disable-line
@@ -481,42 +509,6 @@ export default function CephCanvasEditor({
                 );
               })}
 
-              {/* ── Geometric Overlays / Rulers ──────────────────────────── */}
-              {showRulers && (
-                <Group>
-                  {/* U1 Axis (Long axis of incisor) - dashed orange */}
-                  {u1Line && (
-                    <Line
-                      points={u1Line}
-                      stroke="#f97316"
-                      strokeWidth={2 / stageScale}
-                      dash={[6, 6]}
-                      listening={false}
-                    />
-                  )}
-                  {/* Palatal Plane (PP) - dashed blue */}
-                  {ppLine && (
-                    <Line
-                      points={ppLine}
-                      stroke="#3b82f6"
-                      strokeWidth={2 / stageScale}
-                      dash={[6, 6]}
-                      listening={false}
-                    />
-                  )}
-                  {/* Measurement Projections - solid lines */}
-                  {visualProjectionLines.map((line, idx) => (
-                    <Line
-                      key={idx}
-                      points={line.points}
-                      stroke={line.color}
-                      strokeWidth={2.5 / stageScale}
-                      listening={false}
-                    />
-                  ))}
-                </Group>
-              )}
-
               {/* ── Keypoints ─────────────────────────────────────────────── */}
               {showLandmarks && keypoints.map((kp) => {
                 const [kx, ky] = toContent(kp.x, kp.y);
@@ -548,6 +540,44 @@ export default function CephCanvasEditor({
                   </Group>
                 );
               })}
+
+              {/* ── Geometric Overlays / Rulers (last = on top; crash here is isolated) */}
+              {showRulers && (
+                <Group listening={false}>
+                  {/* U1 Axis (Long axis of incisor) - dashed orange */}
+                  {u1Line && (
+                    <Line
+                      points={u1Line}
+                      stroke="#f97316"
+                      strokeWidth={2 / stageScale}
+                      dash={[6, 6]}
+                      listening={false}
+                    />
+                  )}
+                  {/* Palatal Plane (PP) - dashed blue */}
+                  {ppLine && (
+                    <Line
+                      points={ppLine}
+                      stroke="#3b82f6"
+                      strokeWidth={2 / stageScale}
+                      dash={[6, 6]}
+                      listening={false}
+                    />
+                  )}
+                  {/* Measurement Projections - solid lines with end-caps */}
+                  {visualProjectionLines.map((line, idx) => (
+                    <Line
+                      key={idx}
+                      points={line.points}
+                      stroke={line.color}
+                      strokeWidth={2.5 / stageScale}
+                      lineCap="round"
+                      lineJoin="round"
+                      listening={false}
+                    />
+                  ))}
+                </Group>
+              )}
             </Layer>
           </Stage>
         )}
