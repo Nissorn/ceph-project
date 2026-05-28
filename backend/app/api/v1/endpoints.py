@@ -23,9 +23,13 @@ async def analyze_endpoint(file: UploadFile = File(...)):
     except Exception as e:
         raise HTTPException(status_code=400, detail=f"Failed to read upload: {e}")
 
+    # Extract image_id from the uploaded filename
+    from pathlib import Path
+    image_id = Path(file.filename).stem if file.filename else None
+
     # Run the full production pipeline
     try:
-        result = analysis_service().analyze_image(contents)
+        result = analysis_service().analyze_image(contents, image_id=image_id)
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Analysis pipeline error: {e}")
 

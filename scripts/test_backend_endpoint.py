@@ -121,14 +121,25 @@ def _audit_response(payload: dict) -> tuple[bool, list[str]]:
         if "pixel_count" not in cls_data:
             errors.append(f"segmentation.{cls_name} missing 'pixel_count'")
 
-    # 4. u1_pp_angle_deg
+    # 4. metrics check
     metrics = data.get("metrics", {})
-    if "u1_pp_angle_deg" not in metrics:
-        errors.append("metrics missing 'u1_pp_angle_deg'")
-    else:
-        angle = metrics["u1_pp_angle_deg"]
-        if not isinstance(angle, (int, float)):
-            errors.append(f"u1_pp_angle_deg is not numeric: {angle!r}")
+    required_metric_fields = [
+        "u1_pp_angle_deg", "labial_crest_mm", "labial_midroot_mm", "labial_apex_mm",
+        "palatal_crest_mm", "palatal_midroot_mm", "palatal_apex_mm",
+        "bone_thickness_type", "bone_thickness_interpretation", "root_apex_position_type",
+        "general_retraction_strategy", "preferred_biomechanics", "biomechanics_to_avoid", "clinical_implication"
+    ]
+    for field in required_metric_fields:
+        if field not in metrics:
+            errors.append(f"metrics missing '{field}'")
+        else:
+            val = metrics[field]
+            if field.endswith("_mm") or field.endswith("_deg"):
+                if not isinstance(val, (int, float)):
+                    errors.append(f"metrics.{field} is not numeric: {val!r}")
+            else:
+                if not isinstance(val, str) or not val:
+                    errors.append(f"metrics.{field} is not a non-empty string: {val!r}")
 
     return (len(errors) == 0, errors)
 
