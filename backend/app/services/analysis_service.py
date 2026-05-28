@@ -136,7 +136,7 @@ def _build_landmark_model() -> torch.nn.Module:
     return CephalometricModel(NUM_KEYPOINTS)
 
 
-def _build_segmentation_model(num_classes: int = 3) -> torch.nn.Module:
+def _build_segmentation_model(num_classes: int = 4) -> torch.nn.Module:
     try:
         import segmentation_models_pytorch as smp
     except ImportError:
@@ -219,57 +219,43 @@ def _coords_input_to_orig(
     return out
 
 
-# ── segmentation mask helpers ─────────────────────────────────────────────────
+# ── 4-class segmentation mask helpers ─────────────────────────────────────────
+# Model outputs 4 classes: [Background, Upper_incisor, Labial_bone, Palatal_bone]
+# Inference uses argmax (not sigmoid threshold) to get a clean single segmentation map.
+# Background is discarded; indices 1/2/3 are remapped to 0/1/2 for downstream code.
 
-_SEG_THRESHOLD = 0.6   # stricter than 0.5 to tighten bloated boundaries
+_CLASS_ARGMAX_TO_OUTPUT = {1: CLASS_UPPER_INCISOR, 2: CLASS_LABIAL_BONE, 3: CLASS_PALATAL_BONE}
+
 
 def _decode_segmentation_masks(
-    logits: torch.Tensor,   # [1, num_classes, H, W] raw model output
+    logits: torch.Tensor,   # [1, 4, H, W] raw model output (4 classes incl. background)
     orig_w: int,
     orig_h: int,
 ) -> list[np.ndarray]:
-    """Decode raw logits to binary masks via independent per-class sigmoid.
+    """Decode 4-class argmax output → three binary masks [H, W] uint8.
 
-    The model has 3 foreground-only output channels and NO background class.
-    argmax is wrong here: it forces every background pixel into the
-    highest-scoring foreground class, destroying small minority classes
-    like Upper_incisor. Independent sigmoid lets background pixels score
-    below threshold on all channels and appear in zero masks.
-    Rare pixel-level overlaps are resolved downstream by _resolve_mask_overlaps.
+    Background (class 0 from argmax) is discarded.
+    Classes 1/2/3 are remapped to Upper_incisor/Labial_bone/Palatal_bone
+    to match the rest of the pipeline.
     """
-    sig = torch.sigmoid(logits).cpu()[0].numpy()   # [num_classes, H, W]
-    num_classes = logits.shape[1]
-    masks_native_res = []
-    for c in range(num_classes):
-        mask_512 = (sig[c] > _SEG_THRESHOLD).astype(np.uint8)
-        mask = cv2.resize(mask_512, (orig_w, orig_h), interpolation=cv2.INTER_NEAREST)
-        masks_native_res.append(mask)
-    return masks_native_res
+    # argmax over class dimension → [1, H, W] integer class map
+    class_map = torch.argmax(logits, dim=1).cpu()[0].numpy().astype(np.uint8)  # [H, W]
+
+    # Resize to native resolution before extracting per-class masks
+    class_map_native = cv2.resize(class_map, (orig_w, orig_h), interpolation=cv2.INTER_NEAREST)
+
+    masks: list[np.ndarray] = []
+    for output_idx in range(3):
+        masks.append((class_map_native == (output_idx + 1)).astype(np.uint8))
+
+    # No sigmoid thresholding or overlap resolution needed with argmax
+    return masks
+
 
 def _resolve_mask_overlaps(masks: list[np.ndarray]) -> tuple[list[np.ndarray], dict]:
-    """
-    Upper_incisor (class 0) takes priority over Palatal_bone (class 2).
-    Palatal_bone = Palatal_bone AND (NOT Upper_incisor) → zero overlap.
-    """
-    palatal = masks[CLASS_PALATAL_BONE].copy().astype(bool)
-    incisor = masks[CLASS_UPPER_INCISOR].copy().astype(bool)
-    labial  = masks[CLASS_LABIAL_BONE].copy().astype(bool)
-
-    overlap_before = int(np.logical_and(palatal, incisor).sum())
-    palatal_corrected = np.logical_and(palatal, ~incisor).astype(np.uint8)
-    overlap_after = int(np.logical_and(palatal_corrected, incisor).sum())
-
-    corrected = [
-        incisor.astype(np.uint8),
-        labial.astype(np.uint8),
-        palatal_corrected,
-    ]
-    diag = {
-        "overlap_before": overlap_before,
-        "overlap_after":  overlap_after,
-        "pixels_corrected": overlap_before - overlap_after,
-    }
-    return corrected, diag
+    """No-op with argmax — classes are mutually exclusive by construction."""
+    diag = {"note": "argmax_4class_no_overlap_resolution_needed"}
+    return masks, diag
 
 
 # ── geometric snapping helpers ──────────────────────────────────────────────
@@ -511,19 +497,22 @@ class AnalysisService:
             self._landmark_model = lm
             print(f"[AnalysisService] Landmark model loaded: {landmark_ckpt_path.name}")
 
-        # ── Segmentation model (DeepLabV3Plus) ──────────────────────────────
-        seg_ckpt_path = ROOT / "models" / "exp0128_DeepLabV3Plus_resnet34_20260524_043501" / "best_model.pt"
+        # ── Segmentation model (DeepLabV3Plus, 4-class argmax) ─────────────────
+        # User placed trained weights at project root — also fall back to models/exp*/
+        seg_ckpt_path = ROOT / "best_model.pt"
+        if not seg_ckpt_path.exists():
+            seg_ckpt_path = ROOT / "models" / "exp0128_DeepLabV3Plus_resnet34_20260524_043501" / "best_model.pt"
         if not seg_ckpt_path.exists():
             print(
-                "[AnalysisService] WARNING: Segmentation checkpoint not found: "
-                f"{seg_ckpt_path}\n"
+                "[AnalysisService] WARNING: Segmentation checkpoint not found:\n"
+                f"  Tried: {ROOT / 'best_model.pt'}\n"
+                f"  Tried: {ROOT / 'models' / 'exp0128_DeepLabV3Plus_resnet34_20260524_043501' / 'best_model.pt'}\n"
                 "  Segmentation model unavailable.\n"
-                "  Expected path inside container: /app/models/exp*/best_model.pt\n"
-                "  Verify: docker-compose.yml has './models:/app/models' volume mount."
+                "  Verify: docker-compose.yml has './ceph-project:/app/ceph-project' volume mount."
             )
             self._seg_model = None
         else:
-            sm = _build_segmentation_model(3)
+            sm = _build_segmentation_model(4)
             seg_state = torch.load(seg_ckpt_path, map_location=self._device, weights_only=False)
             sm.load_state_dict(seg_state, strict=False)
             sm = sm.to(self._device)
