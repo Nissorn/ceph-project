@@ -28,10 +28,9 @@ class SnappingDiag(BaseModel):
 
 
 class MaskOverlapDiagnostic(BaseModel):
-    overlap_before: Optional[int] = None
-    overlap_after: Optional[int] = None
-    pixels_corrected: Optional[int] = None
-    note: Optional[str] = None
+    overlap_before: int
+    overlap_after: int
+    pixels_corrected: int
 
 
 class Metrics(BaseModel):
