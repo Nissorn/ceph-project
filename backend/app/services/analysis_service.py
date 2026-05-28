@@ -151,10 +151,29 @@ def _build_segmentation_model(num_classes: int = 4) -> torch.nn.Module:
 
 # ── preprocessing ────────────────────────────────────────────────────────────
 
+def _apply_clahe(img: np.ndarray) -> np.ndarray:
+    """
+    Apply CLAHE (Contrast Limited Adaptive Histogram Equalization) to an RGB image.
+
+    Training pipeline used A.CLAHE(clip_limit=2.0, tileGridSize=(8,8)).
+    Exact equivalent via OpenCV:
+      1. Convert RGB → LAB (L-channel holds luminance)
+      2. Split; apply cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8,8)) to L
+      3. Merge; convert back to RGB
+    """
+    lab = cv2.cvtColor(img, cv2.COLOR_RGB2LAB)
+    l, a, b = cv2.split(lab)
+    clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
+    l = clahe.apply(l)
+    lab = cv2.merge([l, a, b])
+    return cv2.cvtColor(lab, cv2.COLOR_LAB2RGB)
+
+
 def _preprocess_from_bytes(image_bytes: bytes, target_size: tuple[int, int] = INPUT_SIZE):
     """
     Decode a JPEG/PNG byte stream, read its native (orig_w, orig_h),
-    resize to target_size, normalise to [0,1], return (tensor, orig_h, orig_w).
+    apply CLAHE (matching training pipeline), resize to target_size,
+    normalise to [0,1], return (tensor, orig_h, orig_w).
     """
     nparr = np.frombuffer(image_bytes, np.uint8)
     img = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
@@ -163,6 +182,11 @@ def _preprocess_from_bytes(image_bytes: bytes, target_size: tuple[int, int] = IN
     # BGR → RGB: matches src/phase2/inference.py preprocess_image() and dataset.py __getitem__
     img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
     orig_h, orig_w = img.shape[:2]           # native dimensions
+
+    # CLAHE — MUST match training (A.CLAHE, clipLimit=2.0, tileGridSize=(8,8))
+    # Without this, the DeepLabV3Plus model (trained with CLAHE=True) sees a severe
+    # domain shift and hallucinates bone classes into dark background regions.
+    img = _apply_clahe(img)
 
     # Resize to model input (W, H) = (512, 512)
     img_resized = cv2.resize(img, (target_size[1], target_size[0]))   # (W, H)
