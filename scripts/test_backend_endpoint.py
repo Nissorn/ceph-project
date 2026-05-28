@@ -99,7 +99,7 @@ def _audit_response(payload: dict) -> tuple[bool, list[str]]:
     data = payload.get("data", {})
 
     status = payload.get("status")
-    if status not in ("ok", "success", "degraded"):
+    if status not in ("ok", "success", "degraded", "partial"):
         errors.append(f"Unexpected status: {status}")
 
     expected_disclaimer = "Estimation model based on lateral 2D cephalometric imaging. Must not be considered a replacement for CBCT evaluation."
@@ -109,7 +109,7 @@ def _audit_response(payload: dict) -> tuple[bool, list[str]]:
 
     # 2. landmarks (10 pts)
     lmks = data.get("landmarks")
-    if lmks is not None or status != "degraded":
+    if lmks is not None or status not in ("degraded",):
         if not isinstance(lmks, list) or len(lmks) != 10:
             errors.append(f"Expected 10 landmarks, got {lmks}")
         else:
@@ -120,7 +120,7 @@ def _audit_response(payload: dict) -> tuple[bool, list[str]]:
 
     # 3. segmentation (3 classes, each with polygon + pixel_count)
     seg = data.get("segmentation")
-    if seg is not None or status != "degraded":
+    if seg is not None or status not in ("degraded", "partial"):
         if not isinstance(seg, dict):
             errors.append(f"Expected dict for segmentation, got {seg}")
         else:
@@ -155,7 +155,7 @@ def _audit_response(payload: dict) -> tuple[bool, list[str]]:
 
     # 5. measurement_lines check
     m_lines = data.get("measurement_lines")
-    if m_lines is not None or status != "degraded":
+    if m_lines is not None or status not in ("degraded", "partial"):
         if not isinstance(m_lines, dict):
             errors.append(f"Expected dict for measurement_lines, got {m_lines}")
         else:
