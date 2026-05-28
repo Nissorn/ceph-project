@@ -252,25 +252,34 @@ def _coords_input_to_orig(
 
 
 def _decode_segmentation_masks(
-    logits: torch.Tensor,   # [1, 3, H, W] raw model output (3 foreground classes)
+    logits: torch.Tensor,   # [1, 4, H, W] raw model output (4 classes incl. background)
     orig_w: int,
     orig_h: int,
 ) -> list[np.ndarray]:
-    """Decode 3-class argmax output → three binary masks [H, W] uint8.
+    """Decode 4-class argmax output → three binary masks [H, W] uint8.
 
-    No background class, no remapping needed — argmax values map directly
-    to output indices.
+    The 4-class model produces argmax values:
+      0 → Background    (DISCARD — not sent to frontend)
+      1 → Upper_Incisor  → output index 0
+      2 → Labial_Bone    → output index 1
+      3 → Palatal_Bone   → output index 2
+
+    Frontend expects exactly 3 masks in order: [Upper_Incisor, Labial_Bone, Palatal_Bone].
     """
-    # argmax over class dimension → [1, H, W] integer class map {0, 1, 2}
+    # argmax over class dimension → [1, H, W] integer class map {0, 1, 2, 3}
     class_map = torch.argmax(logits, dim=1).cpu()[0].numpy().astype(np.uint8)  # [H, W]
 
     # Resize to native resolution before extracting per-class masks
     class_map_native = cv2.resize(class_map, (orig_w, orig_h), interpolation=cv2.INTER_NEAREST)
 
+    # Map model class indices to frontend output indices
+    # argmax value 0 = Background → skip entirely
+    # argmax value 1 → output index 0 (Upper_Incisor)
+    # argmax value 2 → output index 1 (Labial_Bone)
+    # argmax value 3 → output index 2 (Palatal_Bone)
     masks: list[np.ndarray] = []
-    for output_idx in range(3):
-        # argmax class index == output index directly (no offset shift)
-        masks.append((class_map_native == output_idx).astype(np.uint8))
+    for argmax_val in [1, 2, 3]:  # skip 0 (Background)
+        masks.append((class_map_native == argmax_val).astype(np.uint8))
 
     return masks
 
@@ -535,7 +544,7 @@ class AnalysisService:
             )
             self._seg_model = None
         else:
-            sm = _build_segmentation_model(3)
+            sm = _build_segmentation_model(4)
             seg_state = torch.load(seg_ckpt_path, map_location=self._device, weights_only=False)
             sm.load_state_dict(seg_state, strict=False)
             sm = sm.to(self._device)
