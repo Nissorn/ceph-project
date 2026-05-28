@@ -132,3 +132,4 @@ Phase 2C.1 hyperparameter fixes:
 - No monitoring messages during active background training — wait for completion notification.
 - Plain-text terminal output, no markdown.
 | #29  | 0.6159  | 0.5211 | Unet          | watchdog update |
+| #29  | 0.6159  | 0.5211 | Unet          | watchdog update |
