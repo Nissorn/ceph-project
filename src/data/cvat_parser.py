@@ -6,6 +6,7 @@ pick up skeleton landmarks automatically when Dr. completes annotations.
 
 from __future__ import annotations
 
+import glob
 import logging
 import xml.etree.ElementTree as ET
 from pathlib import Path
@@ -170,3 +171,53 @@ def parse_cvat_xml(xml_path: str | Path) -> list[dict]:
         records.append(record)
 
     return records
+
+
+def parse_all_cvat_batches(
+    annotations_dir: str | Path,
+    pattern: str = "annotations_batch*.xml",
+) -> list[dict]:
+    """
+    Find and parse all CVAT XML files matching *pattern* inside *annotations_dir*,
+    then merge records (deduplication by image_id, keeping the record with more
+    keypoint annotations).
+
+    This is the canonical multi-batch entry point for Phase 2C and beyond.
+
+    Args:
+        annotations_dir: directory containing CVAT XML exports
+        pattern:         glob pattern for XML files to consume
+
+    Returns:
+        list of record dicts — same schema as parse_cvat_xml()
+    """
+    annotations_dir = Path(annotations_dir)
+    xml_files = sorted(annotations_dir.glob(pattern))
+    if not xml_files:
+        raise FileNotFoundError(
+            f"No XML files matching '{pattern}' in {annotations_dir}"
+        )
+
+    seen: dict[str, int] = {}   # image_id → index into all_records
+    all_records: list[dict] = []
+
+    for xml_path in xml_files:
+        log.info("Parsing batch: %s", xml_path.name)
+        records = parse_cvat_xml(xml_path)
+        for rec in records:
+            image_id = rec["image_id"]
+            if image_id not in seen:
+                seen[image_id] = len(all_records)
+                all_records.append(rec)
+            else:
+                # Merge: keep whichever has more annotated keypoints
+                existing = all_records[seen[image_id]]
+                if sum(rec.get("valid_mask", [])) > sum(existing.get("valid_mask", [])):
+                    all_records[seen[image_id]] = rec
+                log.debug(
+                    "Duplicate image_id %s — kept record with more annotations",
+                    image_id,
+                )
+        log.info("  +%d records from %s (total unique: %d)", len(records), xml_path.name, len(all_records))
+
+    return all_records
