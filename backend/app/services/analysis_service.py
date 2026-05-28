@@ -149,22 +149,20 @@ def _build_segmentation_model(num_classes: int = 3) -> torch.nn.Module:
     )
 
 
-# ── preprocessing ────────────────────────────────────────────────────────────
+# ── preprocessing (landmarks — NO CLAHE, NO ImageNet norm) ──────────────────
 
-def _preprocess_from_bytes(image_bytes: bytes, target_size: tuple[int, int] = INPUT_SIZE):
+def _preprocess_for_landmarks(image_bytes: bytes, target_size: tuple[int, int] = INPUT_SIZE):
     """
-    Decode a JPEG/PNG byte stream, read its native (orig_w, orig_h),
-    resize to target_size, normalise with ImageNet stats, return (tensor, orig_h, orig_w).
+    Decode JPEG/PNG bytes, return native dims + float32/255 tensor in [0,1].
+    NO ImageNet normalisation, NO CLAHE — matches the original landmark training
+    pipeline that produced working heatmaps.
     """
     nparr = np.frombuffer(image_bytes, np.uint8)
     img = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
     if img is None:
         raise ValueError("Cannot decode image from upload stream")
-    # BGR → RGB
     img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
     orig_h, orig_w = img.shape[:2]
-
-    # Resize to model input (W, H) = (512, 512)
     img_resized = cv2.resize(img, (target_size[1], target_size[0]))   # (W, H)
     tensor = (
         torch.from_numpy(img_resized)
@@ -172,11 +170,54 @@ def _preprocess_from_bytes(image_bytes: bytes, target_size: tuple[int, int] = IN
         .permute(2, 0, 1)    # HWC → CHW
         / 255.0
     )
-    # Standard ImageNet normalisation (no CLAHE — clean pipeline)
+    return tensor.unsqueeze(0), orig_h, orig_w  # [1, 3, H, W]
+
+
+# ── preprocessing (segmentation — CLAHE + ImageNet norm) ──────────────────────
+
+def _apply_clahe(img: np.ndarray) -> np.ndarray:
+    """
+    Apply CLAHE (Contrast Limited Adaptive Histogram Equalization) to an RGB image.
+    Training pipeline used A.CLAHE(clip_limit=2.0, tileGridSize=(8,8)).
+    Exact equivalent via OpenCV:
+      1. Convert RGB → LAB (L-channel holds luminance)
+      2. Split; apply cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8,8)) to L
+      3. Merge; convert back to RGB
+    """
+    lab = cv2.cvtColor(img, cv2.COLOR_RGB2LAB)
+    l, a, b = cv2.split(lab)
+    clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
+    l = clahe.apply(l)
+    lab = cv2.merge([l, a, b])
+    return cv2.cvtColor(lab, cv2.COLOR_LAB2RGB)
+
+
+def _preprocess_for_segmentation(image_bytes: bytes, target_size: tuple[int, int] = INPUT_SIZE):
+    """
+    Decode JPEG/PNG bytes, apply CLAHE (matching segmentation training domain),
+    resize, convert to float32/255, normalise with ImageNet stats.
+    """
+    nparr = np.frombuffer(image_bytes, np.uint8)
+    img = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
+    if img is None:
+        raise ValueError("Cannot decode image from upload stream")
+    img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
+    orig_h, orig_w = img.shape[:2]
+
+    # CLAHE — matches A.CLAHE(clipLimit=2.0, tileGridSize=(8,8)) used at training
+    img = _apply_clahe(img)
+
+    img_resized = cv2.resize(img, (target_size[1], target_size[0]))   # (W, H)
+    tensor = (
+        torch.from_numpy(img_resized)
+        .float()
+        .permute(2, 0, 1)    # HWC → CHW
+        / 255.0
+    )
+    # ImageNet normalisation (segmentation model expects this)
     mean = torch.tensor([0.485, 0.456, 0.406]).view(3, 1, 1)
     std  = torch.tensor([0.229, 0.224, 0.225]).view(3, 1, 1)
     tensor = (tensor - mean) / std
-
     return tensor.unsqueeze(0), orig_h, orig_w  # [1, 3, H, W]
 
 
@@ -584,9 +625,11 @@ class AnalysisService:
                 "metrics": {"u1_pp_angle_deg": None},
             }
 
-        # ── Step 1: Read native dimensions + preprocess ────────────────────
-        tensor_512, orig_h, orig_w = _preprocess_from_bytes(image_bytes, INPUT_SIZE)
-        tensor_512 = tensor_512.to(self._device)
+        # ── Step 1: Read native dimensions + preprocess (separate pipelines) ───
+        tensor_lm, orig_h, orig_w = _preprocess_for_landmarks(image_bytes, INPUT_SIZE)
+        tensor_seg, _, _          = _preprocess_for_segmentation(image_bytes, INPUT_SIZE)
+        tensor_lm  = tensor_lm.to(self._device)
+        tensor_seg = tensor_seg.to(self._device)
 
         # EXPLICIT scale verification — no hidden assumptions
         scale_x = orig_w / INPUT_SIZE[1]   # e.g. 1729 / 512
@@ -594,7 +637,7 @@ class AnalysisService:
 
         # ── Step 2: Landmark inference ─────────────────────────────────────
         with torch.no_grad():
-            heatmaps = self._landmark_model(tensor_512)
+            heatmaps = self._landmark_model(tensor_lm)
             if heatmaps.shape[-2:] != HEATMAP_SIZE:
                 heatmaps = F.interpolate(heatmaps, size=HEATMAP_SIZE, mode="bilinear", align_corners=False)
 
@@ -605,7 +648,7 @@ class AnalysisService:
 
         # ── Step 3: Segmentation inference ─────────────────────────────────
         with torch.no_grad():
-            logits = self._seg_model(tensor_512)
+            logits = self._seg_model(tensor_seg)
 
         raw_masks = _decode_segmentation_masks(logits, orig_w, orig_h)
 
