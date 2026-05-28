@@ -136,7 +136,7 @@ def _build_landmark_model() -> torch.nn.Module:
     return CephalometricModel(NUM_KEYPOINTS)
 
 
-def _build_segmentation_model(num_classes: int = 4) -> torch.nn.Module:
+def _build_segmentation_model(num_classes: int = 3) -> torch.nn.Module:
     try:
         import segmentation_models_pytorch as smp
     except ImportError:
@@ -243,26 +243,25 @@ def _coords_input_to_orig(
     return out
 
 
-# ── 4-class segmentation mask helpers ─────────────────────────────────────────
-# Model outputs 4 classes: [Background, Upper_incisor, Labial_bone, Palatal_bone]
-# Inference uses argmax (not sigmoid threshold) to get a clean single segmentation map.
-# Background is discarded; indices 1/2/3 are remapped to 0/1/2 for downstream code.
-
-_CLASS_ARGMAX_TO_OUTPUT = {1: CLASS_UPPER_INCISOR, 2: CLASS_LABIAL_BONE, 3: CLASS_PALATAL_BONE}
+# ── 3-class segmentation (Upper_incisor, Labial_bone, Palatal_bone) ─────────────
+# Model outputs 3 channels (no background class).
+# argmax over the 3 channels gives class indices 0, 1, 2 mapped directly:
+#   0 → Upper_incisor  (output index 0)
+#   1 → Labial_bone    (output index 1)
+#   2 → Palatal_bone   (output index 2)
 
 
 def _decode_segmentation_masks(
-    logits: torch.Tensor,   # [1, 4, H, W] raw model output (4 classes incl. background)
+    logits: torch.Tensor,   # [1, 3, H, W] raw model output (3 foreground classes)
     orig_w: int,
     orig_h: int,
 ) -> list[np.ndarray]:
-    """Decode 4-class argmax output → three binary masks [H, W] uint8.
+    """Decode 3-class argmax output → three binary masks [H, W] uint8.
 
-    Background (class 0 from argmax) is discarded.
-    Classes 1/2/3 are remapped to Upper_incisor/Labial_bone/Palatal_bone
-    to match the rest of the pipeline.
+    No background class, no remapping needed — argmax values map directly
+    to output indices.
     """
-    # argmax over class dimension → [1, H, W] integer class map
+    # argmax over class dimension → [1, H, W] integer class map {0, 1, 2}
     class_map = torch.argmax(logits, dim=1).cpu()[0].numpy().astype(np.uint8)  # [H, W]
 
     # Resize to native resolution before extracting per-class masks
@@ -270,9 +269,9 @@ def _decode_segmentation_masks(
 
     masks: list[np.ndarray] = []
     for output_idx in range(3):
-        masks.append((class_map_native == (output_idx + 1)).astype(np.uint8))
+        # argmax class index == output index directly (no offset shift)
+        masks.append((class_map_native == output_idx).astype(np.uint8))
 
-    # No sigmoid thresholding or overlap resolution needed with argmax
     return masks
 
 
@@ -536,7 +535,7 @@ class AnalysisService:
             )
             self._seg_model = None
         else:
-            sm = _build_segmentation_model(4)
+            sm = _build_segmentation_model(3)
             seg_state = torch.load(seg_ckpt_path, map_location=self._device, weights_only=False)
             sm.load_state_dict(seg_state, strict=False)
             sm = sm.to(self._device)
