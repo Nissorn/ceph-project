@@ -111,6 +111,11 @@ CLASS_UPPER_INCISOR   = 1
 CLASS_LABIAL_BONE     = 2
 CLASS_PALATAL_BONE    = 3
 
+# ── mask list indices (length 3, after discarding background) ───────────────
+MASK_IDX_UPPER_INCISOR = 0
+MASK_IDX_LABIAL_BONE   = 1
+MASK_IDX_PALATAL_BONE  = 2
+
 # ── model builders (mirrors src/phase2/inference.py) ────────────────────────
 
 def _build_landmark_model() -> torch.nn.Module:
@@ -414,14 +419,9 @@ def _sliding_segmentation_inference(
             r, c = patch_coords[i]
 
             # [H, W, 3] → [1, 3, patch_size, patch_size] float32 / 255
-            tensor = (
-                torch.from_numpy(patch)
-                .float()
-                .permute(2, 0, 1)      # HWC → CHW
-                / 255.0
-                .unsqueeze(0)          # batch dim
-                .to(device)
-            )
+            patch_f = torch.from_numpy(patch).float().permute(2, 0, 1)
+            patch_f = patch_f / 255.0
+            tensor = patch_f.unsqueeze(0).to(device)
 
             logits: torch.Tensor = seg_model(tensor)   # [1, 4, 512, 512]
             logits_np = logits.cpu().numpy()[0]          # [4, 512, 512]
@@ -474,8 +474,8 @@ def _project_point_onto_contour(pt: np.ndarray, contour: np.ndarray) -> np.ndarr
 
 def _snap_crest_points(coords: np.ndarray, masks: list[np.ndarray]) -> tuple[np.ndarray, dict]:
     snapped = coords.copy()
-    labial_contour  = _contour_from_mask(masks[CLASS_LABIAL_BONE])
-    palatal_contour = _contour_from_mask(masks[CLASS_PALATAL_BONE])
+    labial_contour  = _contour_from_mask(masks[MASK_IDX_LABIAL_BONE])
+    palatal_contour = _contour_from_mask(masks[MASK_IDX_PALATAL_BONE])
     diag = {}
 
     for idx, name, contour in [(3, "Labial_crest", labial_contour), (5, "Palatal_crest", palatal_contour)]:
@@ -506,7 +506,7 @@ def _snap_crest_points(coords: np.ndarray, masks: list[np.ndarray]) -> tuple[np.
 
 def _snap_midroot_points(coords: np.ndarray, masks: list[np.ndarray]) -> tuple[np.ndarray, dict]:
     snapped = coords.copy()
-    incisor_contour = _contour_from_mask(masks[CLASS_UPPER_INCISOR])
+    incisor_contour = _contour_from_mask(masks[MASK_IDX_UPPER_INCISOR])
     diag = {}
 
     if incisor_contour is None:
@@ -543,7 +543,7 @@ def _snap_midroot_points(coords: np.ndarray, masks: list[np.ndarray]) -> tuple[n
 
 def _snap_ans_pns(coords: np.ndarray, masks: list[np.ndarray]) -> tuple[np.ndarray, dict]:
     snapped = coords.copy()
-    palatal_contour = _contour_from_mask(masks[CLASS_PALATAL_BONE])
+    palatal_contour = _contour_from_mask(masks[MASK_IDX_PALATAL_BONE])
     diag = {}
 
     for idx, name in [(6, "ANS"), (7, "PNS")]:
@@ -815,9 +815,9 @@ class AnalysisService:
         snapping_diag = {**crest_diag, **midroot_diag, **ans_pns_diag}
 
         # ── Step 6: Polygon boundary extraction ────────────────────────────
-        poly_incisor = _mask_to_polygon(corrected_masks[CLASS_UPPER_INCISOR])
-        poly_labial  = _mask_to_polygon(corrected_masks[CLASS_LABIAL_BONE])
-        poly_palatal = _mask_to_polygon(corrected_masks[CLASS_PALATAL_BONE])
+        poly_incisor = _mask_to_polygon(corrected_masks[MASK_IDX_UPPER_INCISOR])
+        poly_labial  = _mask_to_polygon(corrected_masks[MASK_IDX_LABIAL_BONE])
+        poly_palatal = _mask_to_polygon(corrected_masks[MASK_IDX_PALATAL_BONE])
 
         # ── Step 7: Biomechanical angle (from raw coords — snapping disabled) ──
         u1_pp_angle_deg = _compute_u1_pp_angle_deg(raw_coords_orig)
@@ -843,15 +843,15 @@ class AnalysisService:
             "segmentation": {
                 "Upper_incisor": {
                     "polygon": [[float(x), float(y)] for x, y in poly_incisor] if poly_incisor else [],
-                    "pixel_count": int(corrected_masks[CLASS_UPPER_INCISOR].sum()),
+                    "pixel_count": int(corrected_masks[MASK_IDX_UPPER_INCISOR].sum()),
                 },
                 "Labial_bone": {
                     "polygon": [[float(x), float(y)] for x, y in poly_labial] if poly_labial else [],
-                    "pixel_count": int(corrected_masks[CLASS_LABIAL_BONE].sum()),
+                    "pixel_count": int(corrected_masks[MASK_IDX_LABIAL_BONE].sum()),
                 },
                 "Palatal_bone": {
                     "polygon": [[float(x), float(y)] for x, y in poly_palatal] if poly_palatal else [],
-                    "pixel_count": int(corrected_masks[CLASS_PALATAL_BONE].sum()),
+                    "pixel_count": int(corrected_masks[MASK_IDX_PALATAL_BONE].sum()),
                 },
             },
             "snapping": snapping_diag,
