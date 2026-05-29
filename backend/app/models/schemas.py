@@ -52,6 +52,19 @@ class SegmentationData(BaseModel):
     Palatal_bone: SegmentationClass
 
 
+class BoneThickness(BaseModel):
+    labial_min_mm: float
+    mandibular_min_mm: float
+
+
+class Classification(BaseModel):
+    interpretation: str
+    root_apex_position: Optional[str] = None
+    preferred_biomechanics: Optional[str] = None
+    avoid: Optional[str] = None
+    implication: Optional[str] = None
+
+
 class AnalysisResultData(BaseModel):
     image_id: str
     landmarks: List[LandmarkPoint]
@@ -60,6 +73,8 @@ class AnalysisResultData(BaseModel):
     snapping: Dict[str, Any]
     mask_overlap_diagnostic: MaskOverlapDiagnostic
     metrics: Metrics
+    bone_thickness: Optional[BoneThickness] = None
+    classification: Optional[Classification] = None
     _debug: Optional[DebugInfo] = None
 
 

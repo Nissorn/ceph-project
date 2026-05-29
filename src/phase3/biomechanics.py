@@ -531,6 +531,88 @@ class BoneThicknessCalculator:
             
         return min_thickness
 
+    def calculate_labial_min_with_offset(self, offset_mm: float = 2.0) -> float:
+        """Find the minimum labial bone thickness excluding an upper offset."""
+        t_min, t_apex, _ = self._get_t_min_t_apex()
+        if t_min == float('inf'):
+            return 0.0
+            
+        offset_pixels = offset_mm / self.mm_per_pixel
+        t_offset = t_min + offset_pixels
+        
+        if t_offset > t_apex:
+            t_offset = t_min
+            
+        min_thickness = float('inf')
+        num_samples = int(np.ceil(t_apex - t_offset)) + 1
+        if num_samples <= 0:
+            return 0.0
+            
+        t_samples = np.linspace(t_offset, t_apex, num_samples)
+        
+        labial_coords = np.argwhere(self.labial_bone_mask > 0)
+        labial_xy = np.fliplr(labial_coords) if len(labial_coords) > 0 else np.array([])
+        
+        if len(labial_xy) == 0:
+            return 0.0
+            
+        for t_s in t_samples:
+            sample_point = self.upper_tip + self.u1_unit * t_s
+            vectors = labial_xy - sample_point
+            projections = np.dot(vectors, self.u1_perp_unit)
+            t_min_proj = np.min(projections)
+            t_max_proj = np.max(projections)
+            thickness = abs(t_max_proj - t_min_proj) * self.mm_per_pixel
+            
+            if thickness < min_thickness:
+                min_thickness = thickness
+                
+        if min_thickness == float('inf'):
+            return 0.0
+            
+        return min_thickness
+
+    def calculate_palatal_min_with_offset(self, offset_mm: float = 2.0) -> float:
+        """Find the minimum palatal bone thickness excluding an upper offset."""
+        t_min, t_apex, _ = self._get_t_min_t_apex()
+        if t_min == float('inf'):
+            return 0.0
+            
+        offset_pixels = offset_mm / self.mm_per_pixel
+        t_offset = t_min + offset_pixels
+        
+        if t_offset > t_apex:
+            t_offset = t_min
+            
+        min_thickness = float('inf')
+        num_samples = int(np.ceil(t_apex - t_offset)) + 1
+        if num_samples <= 0:
+            return 0.0
+            
+        t_samples = np.linspace(t_offset, t_apex, num_samples)
+        
+        palatal_coords = np.argwhere(self.palatal_bone_mask > 0)
+        palatal_xy = np.fliplr(palatal_coords) if len(palatal_coords) > 0 else np.array([])
+        
+        if len(palatal_xy) == 0:
+            return 0.0
+            
+        for t_s in t_samples:
+            sample_point = self.upper_tip + self.u1_unit * t_s
+            vectors = palatal_xy - sample_point
+            projections = np.dot(vectors, self.u1_perp_unit)
+            t_min_proj = np.min(projections)
+            t_max_proj = np.max(projections)
+            thickness = abs(t_max_proj - t_min_proj) * self.mm_per_pixel
+            
+            if thickness < min_thickness:
+                min_thickness = thickness
+                
+        if min_thickness == float('inf'):
+            return 0.0
+            
+        return min_thickness
+
 
 # ---------------------------------------------------------------------------
 # Built-in tests
