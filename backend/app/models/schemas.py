@@ -36,6 +36,34 @@ class MaskOverlapDiagnostic(BaseModel):
 
 class Metrics(BaseModel):
     u1_pp_angle_deg: float
+    labial_crest_mm: float
+    labial_crest_severity: str
+    labial_midroot_mm: float
+    labial_midroot_severity: str
+    labial_apex_mm: float
+    labial_apex_severity: str
+    palatal_crest_mm: float
+    palatal_crest_severity: str
+    palatal_midroot_mm: float
+    palatal_midroot_severity: str
+    palatal_apex_mm: float
+    palatal_apex_severity: str
+    bone_thickness_type: str
+    bone_thickness_interpretation: str
+    root_apex_position_type: str
+    general_retraction_strategy: str
+    preferred_biomechanics: str
+    biomechanics_to_avoid: str
+    clinical_implication: str
+
+
+class MeasurementLines(BaseModel):
+    labial_crest_line: List[List[float]]
+    labial_midroot_line: List[List[float]]
+    labial_apex_line: List[List[float]]
+    palatal_crest_line: List[List[float]]
+    palatal_midroot_line: List[List[float]]
+    palatal_apex_line: List[List[float]]
 
 
 class DebugInfo(BaseModel):
@@ -52,29 +80,15 @@ class SegmentationData(BaseModel):
     Palatal_bone: SegmentationClass
 
 
-class BoneThickness(BaseModel):
-    labial_min_mm: float
-    mandibular_min_mm: float
-
-
-class Classification(BaseModel):
-    interpretation: str
-    root_apex_position: Optional[str] = None
-    preferred_biomechanics: Optional[str] = None
-    avoid: Optional[str] = None
-    implication: Optional[str] = None
-
-
 class AnalysisResultData(BaseModel):
-    image_id: str
-    landmarks: List[LandmarkPoint]
-    raw_landmarks: List[LandmarkPoint]
-    segmentation: SegmentationData
-    snapping: Dict[str, Any]
-    mask_overlap_diagnostic: MaskOverlapDiagnostic
+    image_id: Optional[str] = None
+    landmarks: Optional[List[LandmarkPoint]] = None
+    raw_landmarks: Optional[List[LandmarkPoint]] = None
+    segmentation: Optional[SegmentationData] = None
+    snapping: Optional[Dict[str, Any]] = None
+    mask_overlap_diagnostic: Optional[MaskOverlapDiagnostic] = None
     metrics: Metrics
-    bone_thickness: Optional[BoneThickness] = None
-    classification: Optional[Classification] = None
+    measurement_lines: Optional[MeasurementLines] = None
     _debug: Optional[DebugInfo] = None
 
 

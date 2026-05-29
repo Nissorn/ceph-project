@@ -3,6 +3,56 @@ import UploadZone from './UploadZone';
 import MetricCard from './MetricCard';
 import CephCanvasEditor from './CephCanvasEditor';
 
+const DistanceItem = ({ label, value }: { label: string; value: number }) => {
+  let statusColor = 'text-emerald-500 dark:text-emerald-400';
+  let badgeColor = 'bg-emerald-500/10 border-emerald-500/20 dark:bg-emerald-950/20';
+  let warningIcon = null;
+  let desc = 'Safe';
+
+  if (value < 0.5) {
+    statusColor = 'text-rose-500 dark:text-rose-400';
+    badgeColor = 'bg-rose-500/10 border-rose-500/20 dark:bg-rose-950/20 animate-pulse';
+    warningIcon = <span className="text-xs shrink-0" title="Critical Warning: Thin bone">⚠️</span>;
+    desc = 'Thin (< 0.5mm)';
+  } else if (value <= 1.0) {
+    statusColor = 'text-amber-500 dark:text-amber-400';
+    badgeColor = 'bg-amber-500/10 border-amber-500/20 dark:bg-amber-950/20';
+    desc = 'Monitor';
+  } else {
+    desc = 'Thick (> 1.0mm)';
+  }
+
+  return (
+    <div className={`p-2.5 rounded-lg border ${badgeColor} flex justify-between items-center transition-all duration-200 hover:scale-[1.02] shadow-sm`}>
+      <div className="flex flex-col">
+        <span className="text-[10px] font-bold uppercase text-slate-400 dark:text-slate-500 tracking-wider">
+          {label}
+        </span>
+        <span className="text-[9px] text-slate-400 dark:text-slate-500 mt-0.5">
+          {desc}
+        </span>
+      </div>
+      <div className="flex items-center gap-1.5">
+        {warningIcon}
+        <span className={`text-base font-bold tracking-tight ${statusColor}`}>
+          {value.toFixed(2)}
+        </span>
+        <span className="text-[10px] text-slate-400 dark:text-slate-500 font-normal">
+          mm
+        </span>
+      </div>
+    </div>
+  );
+};
+
+const getShortBoneTypeLabel = (type: string) => {
+  if (type.includes('Type 1')) return 'Thick Bone';
+  if (type.includes('Type 2')) return 'Mono-Plate';
+  if (type.includes('Type 3')) return 'Double-Plate';
+  if (type.includes('Type 4')) return 'Vulnerably Thin';
+  return 'Unknown';
+};
+
 export default function DashboardApp() {
   const [file, setFile] = useState<File | null>(null);
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
@@ -124,26 +174,62 @@ export default function DashboardApp() {
       // Safely parse and cleanly format numeric metrics to prevent excessive float layouts
       const rawAngle = payload.metrics?.u1_pp_angle_deg ?? 112.5;
       const u1_pp_angle = typeof rawAngle === 'number' && !isNaN(rawAngle) ? Number(rawAngle.toFixed(1)) : 112.5;
-      
-      const rawMaxThick = payload.bone_thickness?.labial_min_mm ?? payload.maxillary?.bone_thickness_mm ?? 0;
-      const maxillary_thickness = typeof rawMaxThick === 'number' && !isNaN(rawMaxThick) ? Number(rawMaxThick.toFixed(2)) : 0;
 
-      const rawMandThick = payload.bone_thickness?.mandibular_min_mm ?? payload.mandibular?.bone_thickness_mm ?? 0;
-      const mandibular_thickness = typeof rawMandThick === 'number' && !isNaN(rawMandThick) ? Number(rawMandThick.toFixed(2)) : 0;
-
-      // Robust status classifications tailored to precise clinical parameters
       const u1_pp_status = u1_pp_angle > 115 ? 'warning' : u1_pp_angle < 105 ? 'warning' : 'normal';
-      const maxillary_status = maxillary_thickness < 2.0 ? 'critical' : maxillary_thickness < 2.5 ? 'warning' : 'normal';
-      const mandibular_status = mandibular_thickness < 2.0 ? 'critical' : mandibular_thickness < 2.5 ? 'warning' : 'normal';
+      let u1_pp_desc = 'Normal Inclination';
+      if (u1_pp_angle < 105.0) {
+        u1_pp_desc = 'Retroclined';
+      } else if (u1_pp_angle > 115.0) {
+        u1_pp_desc = 'Proclined';
+      }
+
+      // Extract new 6 distances in mm and their severity levels
+      const labial_crest = Number((payload.metrics?.labial_crest_mm ?? 1.2).toFixed(2));
+      const labial_crest_severity = payload.metrics?.labial_crest_severity ?? 'Monitor';
+      const labial_midroot = Number((payload.metrics?.labial_midroot_mm ?? 1.5).toFixed(2));
+      const labial_midroot_severity = payload.metrics?.labial_midroot_severity ?? 'Monitor';
+      const labial_apex = Number((payload.metrics?.labial_apex_mm ?? 1.0).toFixed(2));
+      const labial_apex_severity = payload.metrics?.labial_apex_severity ?? 'Monitor';
+      const palatal_crest = Number((payload.metrics?.palatal_crest_mm ?? 1.4).toFixed(2));
+      const palatal_crest_severity = payload.metrics?.palatal_crest_severity ?? 'Monitor';
+      const palatal_midroot = Number((payload.metrics?.palatal_midroot_mm ?? 1.6).toFixed(2));
+      const palatal_midroot_severity = payload.metrics?.palatal_midroot_severity ?? 'Monitor';
+      const palatal_apex = Number((payload.metrics?.palatal_apex_mm ?? 1.1).toFixed(2));
+      const palatal_apex_severity = payload.metrics?.palatal_apex_severity ?? 'Monitor';
+
+      const bone_thickness_type = payload.metrics?.bone_thickness_type ?? 'Type 1 – Thick';
+      const bone_thickness_interpretation = payload.metrics?.bone_thickness_interpretation ?? 'Thick alveolar bone; Favorable bone support.';
+      const root_apex_position_type = payload.metrics?.root_apex_position_type ?? 'Midway';
+      const general_retraction_strategy = payload.metrics?.general_retraction_strategy ?? '';
+      const preferred_biomechanics = payload.metrics?.preferred_biomechanics ?? '';
+      const biomechanics_to_avoid = payload.metrics?.biomechanics_to_avoid ?? '';
+      const clinical_implication = payload.metrics?.clinical_implication ?? '';
 
       const normalizedResults = {
         u1_pp_angle,
         u1_pp_status,
-        maxillary_thickness,
-        maxillary_status,
-        mandibular_thickness,
-        mandibular_status,
-        interpretation: payload.classification?.interpretation || payload.interpretation || payload.summary || 'Analysis completed successfully. Review extracted biomechanical structures below.',
+        u1_pp_desc,
+        labial_crest,
+        labial_crest_severity,
+        labial_midroot,
+        labial_midroot_severity,
+        labial_apex,
+        labial_apex_severity,
+        palatal_crest,
+        palatal_crest_severity,
+        palatal_midroot,
+        palatal_midroot_severity,
+        palatal_apex,
+        palatal_apex_severity,
+        bone_thickness_type,
+        bone_thickness_interpretation,
+        root_apex_position_type,
+        general_retraction_strategy,
+        preferred_biomechanics,
+        biomechanics_to_avoid,
+        clinical_implication,
+        metrics: payload.metrics || null,
+        measurement_lines: payload.measurement_lines || null,
         annotations: { keypoints: apiKeypoints, polygons: apiPolygons },
       };
 
@@ -151,7 +237,7 @@ export default function DashboardApp() {
     } catch (err: any) {
       console.error("Analysis failed:", err);
       if (err.name === 'AbortError') {
-        setError('Analysis request timed out after 120 seconds. Verify inference engine availability.');
+        setError('Analysis request timed out after 35 seconds. Verify inference engine availability.');
       } else {
         setError(err.message || 'Failed to connect to the backend analysis service.');
       }
@@ -190,6 +276,8 @@ export default function DashboardApp() {
                      imageFile={file}
                      initialKeypoints={results.annotations?.keypoints}
                      initialPolygons={results.annotations?.polygons}
+                     measurementLines={results.measurement_lines}
+                     metricsData={results.metrics}
                    />
                  </div>
                ) : previewUrl ? (
@@ -286,31 +374,108 @@ export default function DashboardApp() {
               <MetricCard 
                 title="U1-PP Angle" 
                 value={results.u1_pp_angle} 
-                subtitle="° Degrees" 
+                subtitle={`° (${results.u1_pp_desc})`} 
                 status={results.u1_pp_status} 
               />
               <MetricCard 
-                title="Maxillary Bone" 
-                value={results.maxillary_thickness} 
-                subtitle="mm" 
-                status={results.maxillary_status} 
+                title="Alveolar Bone Phenotype" 
+                value={results.bone_thickness_type} 
+                subtitle={getShortBoneTypeLabel(results.bone_thickness_type)} 
+                status={results.bone_thickness_type.includes('Type 1') ? 'normal' : results.bone_thickness_type.includes('Type 4') ? 'critical' : 'warning'} 
               />
-              <MetricCard 
-                title="Mandibular Bone" 
-                value={results.mandibular_thickness} 
-                subtitle="mm" 
-                status={results.mandibular_status} 
-              />
-              <div className="mt-2 p-5 bg-singapodent-primary/5 dark:bg-singapodent-primary/15 border border-singapodent-primary/15 dark:border-singapodent-primary/20 rounded-xl overflow-hidden shadow-sm">
-                 <h4 className="text-xs font-semibold uppercase text-singapodent-primary dark:text-singapodent-accent mb-3 tracking-wider flex items-center gap-2">
-                   <svg className="w-4 h-4 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
-                   </svg>
-                   Clinical Interpretation
-                 </h4>
-                 <p className="text-sm text-slate-700 dark:text-slate-200 leading-relaxed font-normal">
-                   {results.interpretation}
-                 </p>
+
+              {/* Distance Matrix Card */}
+              <div className="bg-white dark:bg-slate-800/90 border border-slate-200 dark:border-slate-700/60 rounded-xl p-5 flex flex-col gap-4 relative overflow-hidden transition-all duration-300">
+                <h4 className="text-xs font-semibold uppercase text-slate-500 dark:text-slate-400 tracking-wider flex items-center gap-2 border-b border-slate-200 dark:border-slate-700/60 pb-2">
+                  <svg className="w-4 h-4 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6h16M4 12h16m-7 6h7" />
+                  </svg>
+                  Root-to-Bone Distances
+                </h4>
+                <div className="grid grid-cols-2 gap-4">
+                  {/* Labial Column */}
+                  <div className="flex flex-col gap-3">
+                    <div className="text-center text-[10px] font-bold text-slate-400 dark:text-slate-500 border-b border-slate-200 dark:border-slate-700/60 pb-1.5 uppercase tracking-wide">
+                      Labial Plate
+                    </div>
+                    <DistanceItem label="Crest" value={results.labial_crest} severity={results.labial_crest_severity} />
+                    <DistanceItem label="Midroot" value={results.labial_midroot} severity={results.labial_midroot_severity} />
+                    <DistanceItem label="Apex (LB)" value={results.labial_apex} severity={results.labial_apex_severity} />
+                  </div>
+
+                  {/* Palatal Column */}
+                  <div className="flex flex-col gap-3">
+                    <div className="text-center text-[10px] font-bold text-slate-400 dark:text-slate-500 border-b border-slate-200 dark:border-slate-700/60 pb-1.5 uppercase tracking-wide">
+                      Palatal Plate
+                    </div>
+                    <DistanceItem label="Crest" value={results.palatal_crest} severity={results.palatal_crest_severity} />
+                    <DistanceItem label="Midroot" value={results.palatal_midroot} severity={results.palatal_midroot_severity} />
+                    <DistanceItem label="Apex (PB)" value={results.palatal_apex} severity={results.palatal_apex_severity} />
+                  </div>
+                </div>
+              </div>
+
+              {/* Biomechanics and Clinical Recommendations Card */}
+              <div className="bg-white dark:bg-slate-800/90 border border-slate-200 dark:border-slate-700/60 rounded-xl p-5 flex flex-col gap-4 relative overflow-hidden transition-all duration-300">
+                <h4 className="text-xs font-semibold uppercase text-slate-500 dark:text-slate-400 tracking-wider flex items-center gap-2 border-b border-slate-200 dark:border-slate-700/60 pb-2">
+                  <svg className="w-4 h-4 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-3 7h3m-3 4h3m-6-4h.01M9 16h.01" />
+                  </svg>
+                  Orthodontic & Biomechanical Plan
+                </h4>
+
+                <div className="flex flex-col gap-3.5">
+                  <div className="flex flex-col p-3 bg-slate-100/50 dark:bg-slate-900/40 border border-slate-200/50 dark:border-slate-700/50 rounded-lg">
+                    <span className="text-[10px] font-bold text-slate-400 dark:text-slate-500 uppercase tracking-wider">Root Apex Position</span>
+                    <span className="text-sm font-semibold text-slate-700 dark:text-slate-200 mt-0.5 flex items-center gap-1.5">
+                      {results.root_apex_position_type === 'Midway' ? '🟢 Midway (Centered)' : results.root_apex_position_type === 'Labial' ? '🔴 Labial Type' : '🟡 Palatal Type'}
+                    </span>
+                  </div>
+
+                  <div className="flex flex-col p-3 bg-slate-100/50 dark:bg-slate-900/40 border border-slate-200/50 dark:border-slate-700/50 rounded-lg">
+                    <span className="text-[10px] font-bold text-slate-400 dark:text-slate-500 uppercase tracking-wider">General Retraction Strategy</span>
+                    <span className="text-sm font-semibold text-slate-700 dark:text-slate-200 mt-0.5 leading-relaxed">
+                      {results.general_retraction_strategy}
+                    </span>
+                  </div>
+
+                  <div className="flex flex-col p-4 bg-emerald-500/5 dark:bg-emerald-500/10 border border-emerald-500/10 dark:border-emerald-500/20 rounded-lg shadow-sm">
+                    <h5 className="text-xs font-bold uppercase text-emerald-600 dark:text-emerald-400 mb-1.5 tracking-wider flex items-center gap-1.5">
+                      Preferred Biomechanics
+                    </h5>
+                    <p className="text-xs text-slate-600 dark:text-slate-300 leading-relaxed font-normal">
+                      {results.preferred_biomechanics}
+                    </p>
+                  </div>
+
+                  <div className="flex flex-col p-4 bg-rose-500/5 dark:bg-rose-500/10 border border-rose-500/10 dark:border-rose-500/20 rounded-lg shadow-sm">
+                    <h5 className="text-xs font-bold uppercase text-rose-600 dark:text-rose-400 mb-1.5 tracking-wider flex items-center gap-1.5">
+                      Biomechanics to Avoid
+                    </h5>
+                    <p className="text-xs text-slate-600 dark:text-slate-300 leading-relaxed font-normal">
+                      {results.biomechanics_to_avoid}
+                    </p>
+                  </div>
+
+                  <div className="flex flex-col p-4 bg-slate-100/50 dark:bg-slate-900/40 border border-slate-200/50 dark:border-slate-700/50 rounded-lg">
+                    <h5 className="text-xs font-bold uppercase text-slate-400 dark:text-slate-500 mb-1.5 tracking-wider flex items-center gap-1.5">
+                      Clinical Implication
+                    </h5>
+                    <p className="text-xs text-slate-600 dark:text-slate-300 leading-relaxed font-normal italic">
+                      "{results.clinical_implication}"
+                    </p>
+                  </div>
+                </div>
+              </div>
+
+              {/* Disclaimer Card */}
+              <div className="bg-amber-500/5 border border-amber-500/20 rounded-xl p-4 flex flex-col gap-2 shadow-sm">
+                <div className="flex items-center gap-2 text-amber-600 dark:text-amber-400 text-[10px] font-bold uppercase tracking-wider">
+                  <span>⚠️ Clinical Disclaimer</span>
+                </div>
+                <p className="text-[10px] text-slate-500 dark:text-slate-400 leading-relaxed">
+                  {results.bone_thickness_interpretation} Estimation model based on 2D lateral cephalometric imaging and does not replace CBCT evaluation.
+                </p>
               </div>
             </div>
           )}

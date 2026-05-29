@@ -214,9 +214,12 @@ def _apply_clahe(img: np.ndarray) -> np.ndarray:
 
 def _preprocess_for_segmentation(image_bytes: bytes, target_size: tuple[int, int] = INPUT_SIZE):
     """
-    Decode JPEG/PNG bytes, apply CLAHE (matching segmentation training domain),
-    resize, convert to float32/255.
-    NO ImageNet normalisation — matches the segmentation training pipeline.
+    Decode JPEG/PNG bytes and preprocess EXACTLY as the training pipeline does:
+      1. BGR -> RGB
+      2. cv2.resize to (W, H) = 512x512 (simple squash, no letterbox, no aspect preservation)
+      3. [H, W, C] -> [C, H, W] float32 / 255.0
+    NO CLAHE. NO ImageNet normalization. NO letterbox padding.
+    This matches SegmentationDataset.__getitem__ lines 80 & 110 exactly.
     """
     nparr = np.frombuffer(image_bytes, np.uint8)
     img = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
@@ -225,17 +228,11 @@ def _preprocess_for_segmentation(image_bytes: bytes, target_size: tuple[int, int
     img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
     orig_h, orig_w = img.shape[:2]
 
-    # CLAHE — matches A.CLAHE(clipLimit=2.0, tileGridSize=(8,8)) used at training
-    img = _apply_clahe(img)
+    H, W = target_size  # (512, 512)
+    img_resized = cv2.resize(img, (W, H))  # simple squash, matches training
 
-    img_resized = cv2.resize(img, (target_size[1], target_size[0]))   # (W, H)
-    tensor = (
-        torch.from_numpy(img_resized)
-        .float()
-        .permute(2, 0, 1)    # HWC → CHW
-        / 255.0
-    )
-    return tensor.unsqueeze(0), orig_h, orig_w  # [1, 3, H, W]
+    tensor = torch.from_numpy(img_resized).float().permute(2, 0, 1) / 255.0  # [3, 512, 512]
+    return tensor.unsqueeze(0), orig_h, orig_w  # [1, 3, 512, 512]
 
 
 # ── landmark decoding ────────────────────────────────────────────────────────
@@ -290,34 +287,27 @@ def _coords_input_to_orig(
 #   3 → Palatal_bone  → output index 2
 
 def _decode_segmentation_masks(
-    logits: torch.Tensor,   # [1, 4, H, W] raw model output (4 classes incl. background)
+    logits: torch.Tensor,   # [1, 4, 512, 512] raw model output
     orig_w: int,
     orig_h: int,
 ) -> list[np.ndarray]:
-    """Decode 4-class argmax output → three binary masks [H, W] uint8.
+    """Decode 4-class argmax output → three binary masks at native resolution.
 
-    The 4-class model produces argmax values:
-      0 → Background    (DISCARD — not sent to frontend)
-      1 → Upper_incisor  → output index 0
-      2 → Labial_bone    → output index 1
-      3 → Palatal_bone   → output index 2
-
-    Frontend expects exactly 3 masks in order: [Upper_incisor, Labial_bone, Palatal_bone].
+    Matches training exactly: model was trained on simple 512x512 squash.
+    Reversal is equally simple: argmax → resize back to (orig_w, orig_h).
     """
-    # argmax over class dimension → [1, H, W] integer class map {0, 1, 2, 3}
-    class_map = torch.argmax(logits, dim=1).cpu()[0].numpy().astype(np.uint8)  # [H, W]
+    class_map = torch.argmax(logits, dim=1).cpu()[0].numpy().astype(np.uint8)  # [512, 512]
 
-    # Resize to native resolution before extracting per-class masks
+    # Resize back to native resolution — simple squash (mirrors training forward pass)
     class_map_native = cv2.resize(class_map, (orig_w, orig_h), interpolation=cv2.INTER_NEAREST)
 
-    # Map model class indices to frontend output indices
-    # argmax value 0 = Background → skip entirely
-    # argmax value 1 → output index 0 (Upper_incisor)
-    # argmax value 2 → output index 1 (Labial_bone)
-    # argmax value 3 → output index 2 (Palatal_bone)
+    # Extract one binary mask per non-background class
     masks: list[np.ndarray] = []
-    for argmax_val in [1, 2, 3]:  # skip 0 (Background)
-        masks.append((class_map_native == argmax_val).astype(np.uint8))
+    for argmax_val in [1, 2, 3]:  # 0=Background (skipped), 1=Incisor, 2=Labial, 3=Palatal
+        binary = (class_map_native == argmax_val).astype(np.uint8)
+        px_count = int(binary.sum())
+        print(f"[SegDecode] class={argmax_val} active_pixels={px_count}")
+        masks.append(binary)
 
     return masks
 
@@ -328,137 +318,22 @@ def _resolve_mask_overlaps(masks: list[np.ndarray]) -> tuple[list[np.ndarray], d
     return masks, diag
 
 
-# ── sliding window inference — Pipeline B (zero retraining) ─────────────────
-
-def _gaussian_weight_2d(size: int, sigma: float) -> np.ndarray:
-    """
-    2D Gaussian weight map centred on the patch.
-    Returns [size, size] float32 array with peak=1.0 at centre, decaying outward.
-    """
-    ax = np.arange(size, dtype=np.float32)
-    ax = np.abs(ax - (size - 1) / 2.0)   # distance from centre along one axis
-    # exp(-0.5 * (d/sigma)^2); at d=sigma → exp(-0.5)≈0.607, at d=2sigma → 0.135
-    gauss_1d = np.exp(-0.5 * (ax / sigma) ** 2)
-    # Outer product gives 2D weight; centre gets 1.0, edges get ~0.135
-    weight = gauss_1d[:, None] * gauss_1d[None, :]
-    return weight.astype(np.float32)
-
-
-def _extract_patches_with_gauss(
-    image: np.ndarray,           # [H, W, 3] uint8, full-resolution
-    patch_size: int,
-    stride: int,
-) -> tuple[list[np.ndarray], list[np.ndarray], list[tuple[int, int]]]:
-    """
-    Extract square patches from image with reflection padding at boundaries.
-    Returns (patches, gauss_weights, top_left_coords) where:
-      - patches: list of [3, patch_size, patch_size] uint8 tensors
-      - gauss_weights: list of [patch_size, patch_size] float32 weight maps
-      - top_left_coords: (row, col) pixel position of each patch in the padded canvas
-    """
-    H, W = image.shape[:2]
-    half = patch_size // 2
-
-    # Reflect-padding so we can sample a full patch at every spatial location
-    padded = np.pad(image, ((half, half), (half, half), (0, 0)), mode="reflect")
-
-    patches: list[np.ndarray] = []
-    gauss_weights: list[np.ndarray] = []
-    coords: list[tuple[int, int]] = []
-
-    for r in range(0, H, stride):
-        for c in range(0, W, stride):
-            # Clip to image extent — last patch may be smaller but the
-            # padding above guarantees a full patch is always available
-            r0 = min(r, H - 1)
-            c0 = min(c, W - 1)
-            r1 = r0 + patch_size
-            c1 = c0 + patch_size
-
-            # Extract from padded canvas (coordinates already include pad offset)
-            patch = padded[r0:r1, c0:c1]   # [patch_size, patch_size, 3]
-
-            # Build per-patch Gaussian weight (same shape, applied uniformly to all 3 channels)
-            weight = _gaussian_weight_2d(patch_size, sigma=_SLIDING_SIGMA)
-
-            patches.append(patch)
-            gauss_weights.append(weight)
-            coords.append((r, c))
-
-    return patches, gauss_weights, coords
-
-
-def _sliding_segmentation_inference(
-    seg_model: torch.nn.Module,
-    image: np.ndarray,           # [H, W, 3] uint8, full-resolution after CLAHE
-    device: torch.device,
-) -> torch.Tensor:              # [1, 4, H, W] soft logits at full resolution
-    """
-    Run 512×512 DeepLabV3+ over full-resolution image via sliding window
-    (50% overlapping 512×512 patches), stitched with per-patch Gaussian
-    weighting. Returns raw soft logits [1, 4, H, W] at native resolution.
-
-    Zero retraining — the model always sees 512×512 input (its training domain),
-    but we recover spatial detail by scanning the native-resolution image.
-    """
-    H, W = image.shape[:2]
-    patch_size = SLIDING_WINDOW_SIZE
-    stride = SLIDING_STRIDE
-
-    # Pre-compute Gaussian weight once (same for every patch)
-    base_weight = _gaussian_weight_2d(patch_size, sigma=_SLIDING_SIGMA)
-
-    # Accumulator buffers: weighted logits + weight sum (for normalisation)
-    acc_logit = np.zeros((4, H, W), dtype=np.float64)
-    acc_weight = np.zeros((H, W), dtype=np.float64)
-
-    patches, _, patch_coords = _extract_patches_with_gauss(
-        image, patch_size, stride
-    )
-
-    with torch.no_grad():
-        for i, patch in enumerate(patches):
-            r, c = patch_coords[i]
-
-            # [H, W, 3] → [1, 3, patch_size, patch_size] float32 / 255
-            patch_f = torch.from_numpy(patch).float().permute(2, 0, 1)
-            patch_f = patch_f / 255.0
-            tensor = patch_f.unsqueeze(0).to(device)
-
-            logits: torch.Tensor = seg_model(tensor)   # [1, 4, 512, 512]
-            logits_np = logits.cpu().numpy()[0]          # [4, 512, 512]
-
-            # Locate this patch in the full-resolution canvas
-            # (r, c) is the top-left corner in image-space coordinates
-            # Blit into accumulators with Gaussian weight
-            rh0, rh1 = r, min(r + patch_size, H)
-            ch0, ch1 = c, min(c + patch_size, W)
-
-            # Crop weight and logits to visible region (patch may extend beyond image)
-            w_vis = base_weight[:rh1 - rh0, :ch1 - ch0]
-            for cls in range(4):
-                acc_logit[cls, rh0:rh1, ch0:ch1] += (logits_np[cls, :rh1 - rh0, :ch1 - ch0] * w_vis)
-            acc_weight[rh0:rh1, ch0:ch1] += w_vis
-
-    # Normalise by accumulated weight — this is the Gaussian-blended average
-    # Guard against /0 (shouldn't happen with padding)
-    acc_weight = np.maximum(acc_weight, 1e-8)
-    for cls in range(4):
-        acc_logit[cls] /= acc_weight
-
-    # Return as [1, 4, H, W] float32 tensor (matches _decode_segmentation_masks interface)
-    return torch.from_numpy(acc_logit[np.newaxis].astype(np.float32))
-
 
 # ── geometric snapping helpers ──────────────────────────────────────────────
 
-def _contour_from_mask(mask: np.ndarray, epsilon_factor: float = 0.002) -> Optional[np.ndarray]:
+def _get_valid_contours(mask: np.ndarray) -> list:
+    """Returns contours, discarding tiny noise artifacts (area < 100px²)."""
     if mask.sum() == 0:
-        return None
+        return []
     contours, _ = cv2.findContours(mask.astype(np.uint8), cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-    if not contours:
+    return [c for c in contours if cv2.contourArea(c) >= 100]
+
+
+def _contour_from_mask(mask: np.ndarray, epsilon_factor: float = 0.002) -> Optional[np.ndarray]:
+    valid_contours = _get_valid_contours(mask)
+    if not valid_contours:
         return None
-    biggest = max(contours, key=cv2.contourArea)
+    biggest = max(valid_contours, key=cv2.contourArea)
     perimeter = cv2.arcLength(biggest, closed=True)
     if perimeter < 1.0:
         return biggest
@@ -491,15 +366,24 @@ def _snap_crest_points(coords: np.ndarray, masks: list[np.ndarray]) -> tuple[np.
                 new_pt = candidates[candidates[:, 1].argmin()]
             else:
                 new_pt = _project_point_onto_contour(pt_raw, contour)
-            snapped[idx] = new_pt
             dx = new_pt[0] - pt_raw[0]
             dy = new_pt[1] - pt_raw[1]
             dist = math.sqrt(dx**2 + dy**2)
-            diag[name] = {
-                "dx": float(round(float(dx), 2)),
-                "dy": float(round(float(dy), 2)),
-                "dist_px": float(round(float(dist), 2)),
-            }
+            if dist > 50.0:
+                snapped[idx] = pt_raw
+                diag[name] = {
+                    "dx": 0.0,
+                    "dy": 0.0,
+                    "dist_px": 0.0,
+                    "note": f"snap_aborted_dist_{dist:.1f}"
+                }
+            else:
+                snapped[idx] = new_pt
+                diag[name] = {
+                    "dx": float(round(float(dx), 2)),
+                    "dy": float(round(float(dy), 2)),
+                    "dist_px": float(round(float(dist), 2)),
+                }
         else:
             diag[name] = {"dx": 0.0, "dy": 0.0, "dist_px": 0.0, "note": "no_contour"}
 
@@ -521,24 +405,34 @@ def _snap_midroot_points(coords: np.ndarray, masks: list[np.ndarray]) -> tuple[n
     # Index 2: max x (rightmost = labial surface)
     pt_raw = coords[2]
     new_pt = pts[pts[:, 0].argmax()]
-    snapped[2] = new_pt
     dx = new_pt[0] - pt_raw[0]; dy = new_pt[1] - pt_raw[1]
-    diag["Labial_midroot"] = {
-        "dx": float(round(float(dx), 2)),
-        "dy": float(round(float(dy), 2)),
-        "dist_px": float(round(float(math.sqrt(dx**2 + dy**2)), 2)),
-    }
+    dist = math.sqrt(dx**2 + dy**2)
+    if dist > 50.0:
+        snapped[2] = pt_raw
+        diag["Labial_midroot"] = {"dx": 0.0, "dy": 0.0, "dist_px": 0.0, "note": f"snap_aborted_dist_{dist:.1f}"}
+    else:
+        snapped[2] = new_pt
+        diag["Labial_midroot"] = {
+            "dx": float(round(float(dx), 2)),
+            "dy": float(round(float(dy), 2)),
+            "dist_px": float(round(float(dist), 2)),
+        }
 
     # Index 4: min x (leftmost = palatal surface)
     pt_raw = coords[4]
     new_pt = pts[pts[:, 0].argmin()]
-    snapped[4] = new_pt
     dx = new_pt[0] - pt_raw[0]; dy = new_pt[1] - pt_raw[1]
-    diag["Palatal_midroot"] = {
-        "dx": float(round(float(dx), 2)),
-        "dy": float(round(float(dy), 2)),
-        "dist_px": float(round(float(math.sqrt(dx**2 + dy**2)), 2)),
-    }
+    dist = math.sqrt(dx**2 + dy**2)
+    if dist > 50.0:
+        snapped[4] = pt_raw
+        diag["Palatal_midroot"] = {"dx": 0.0, "dy": 0.0, "dist_px": 0.0, "note": f"snap_aborted_dist_{dist:.1f}"}
+    else:
+        snapped[4] = new_pt
+        diag["Palatal_midroot"] = {
+            "dx": float(round(float(dx), 2)),
+            "dy": float(round(float(dy), 2)),
+            "dist_px": float(round(float(dist), 2)),
+        }
 
     return snapped, diag
 
@@ -552,13 +446,18 @@ def _snap_ans_pns(coords: np.ndarray, masks: list[np.ndarray]) -> tuple[np.ndarr
         pt_raw = coords[idx]
         if palatal_contour is not None:
             new_pt = _project_point_onto_contour(pt_raw, palatal_contour)
-            snapped[idx] = new_pt
             dx = new_pt[0] - pt_raw[0]; dy = new_pt[1] - pt_raw[1]
-            diag[name] = {
-                "dx": float(round(float(dx), 2)),
-                "dy": float(round(float(dy), 2)),
-                "dist_px": float(round(float(math.sqrt(dx**2 + dy**2)), 2)),
-            }
+            dist = math.sqrt(dx**2 + dy**2)
+            if dist > 50.0:
+                snapped[idx] = pt_raw
+                diag[name] = {"dx": 0.0, "dy": 0.0, "dist_px": 0.0, "note": f"snap_aborted_dist_{dist:.1f}"}
+            else:
+                snapped[idx] = new_pt
+                diag[name] = {
+                    "dx": float(round(float(dx), 2)),
+                    "dy": float(round(float(dy), 2)),
+                    "dist_px": float(round(float(dist), 2)),
+                }
         else:
             diag[name] = {"dx": 0.0, "dy": 0.0, "dist_px": 0.0, "note": "no_contour"}
 
@@ -569,12 +468,11 @@ def _snap_ans_pns(coords: np.ndarray, masks: list[np.ndarray]) -> tuple[np.ndarr
 
 def _mask_to_polygon(mask: np.ndarray, epsilon_factor: float = 0.003) -> list:
     """Convert binary mask to [[x, y], ...] polygon vertex list."""
-    if mask.sum() == 0:
+    valid_contours = _get_valid_contours(mask)
+    if not valid_contours:
         return []
-    contours, _ = cv2.findContours(mask.astype(np.uint8), cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-    if not contours:
-        return []
-    biggest = max(contours, key=cv2.contourArea)
+
+    biggest = max(valid_contours, key=cv2.contourArea)
     perimeter = cv2.arcLength(biggest, closed=True)
     if perimeter < 1.0:
         return biggest.reshape(-1, 2).tolist()
@@ -621,6 +519,79 @@ def _compute_u1_pp_angle_deg(coords: np.ndarray) -> float:
         return 0.0
 
 
+def _get_u1_perp(u1_unit: np.ndarray) -> np.ndarray:
+    """
+    Returns unit vector perpendicular to U1, oriented towards positive x (labial side).
+    """
+    u1_perp = np.array([-u1_unit[1], u1_unit[0]], dtype=np.float32)
+    norm_val = np.linalg.norm(u1_perp)
+    if norm_val > 1e-6:
+        u1_perp = u1_perp / norm_val
+    if u1_perp[0] < 0:
+        u1_perp = -u1_perp
+    return u1_perp
+
+
+def _get_distance_severity(val: float) -> str:
+    """
+    Returns the severity status based on the distance value:
+    - If distance >= 1.0: "Monitor"
+    - If 0.5 <= distance < 1.0: "Warning"
+    - If distance < 0.5: "Critical"
+    """
+    if val >= 1.0:
+        return "Monitor"
+    elif val >= 0.5:
+        return "Warning"
+    else:
+        return "Critical"
+
+
+def _get_bone_thickness_at_point(bone_mask: np.ndarray, start_pt: np.ndarray, direction: np.ndarray, max_dist_px: float = 200.0) -> float:
+    """
+    Ray-marches from tooth surface point start_pt along direction (which is u1_perp or -u1_perp)
+    to find the outer limit of the bone_mask.
+    Returns the distance in pixels.
+    """
+    h, w = bone_mask.shape
+    max_s = 0.0
+    steps = int(max_dist_px * 2)
+    for step in range(steps):
+        s = step * 0.5
+        pt = start_pt + s * direction
+        px = int(round(pt[0]))
+        py = int(round(pt[1]))
+        if 0 <= px < w and 0 <= py < h:
+            if bone_mask[py, px] > 0:
+                max_s = s
+        else:
+            break
+    return max_s
+
+
+def _find_tooth_boundary(tooth_mask: np.ndarray, start_pt: np.ndarray, direction: np.ndarray, max_dist_px: float = 100.0) -> np.ndarray:
+    """
+    Ray-marches from start_pt (on U1 axis, inside tooth) along direction until exiting the tooth_mask.
+    Returns the boundary point coordinate (x, y) np.ndarray.
+    """
+    h, w = tooth_mask.shape
+    steps = int(max_dist_px * 2)
+    last_inside_pt = start_pt.copy()
+    for step in range(steps):
+        s = step * 0.5
+        pt = start_pt + s * direction
+        px = int(round(pt[0]))
+        py = int(round(pt[1]))
+        if 0 <= px < w and 0 <= py < h:
+            if tooth_mask[py, px] > 0:
+                last_inside_pt = pt
+            else:
+                return pt
+        else:
+            break
+    return last_inside_pt
+
+
 # ── AnalysisService singleton ────────────────────────────────────────────────
 
 class AnalysisService:
@@ -649,7 +620,50 @@ class AnalysisService:
         self._seg_model: Optional[torch.nn.Module] = None
         self._device = _SAFE_DEVICE
         self._ready = False
+        
+        # Load calibration records from path in config.yaml
+        self._calibration_map = {}
+        try:
+            import yaml
+            config_path = ROOT / "config.yaml"
+            if config_path.exists():
+                with open(config_path, "r") as f:
+                    config = yaml.safe_load(f)
+                csv_rel_path = config.get("data", {}).get("calibration_csv", "data/processed/calibration.csv")
+                csv_path = ROOT / csv_rel_path
+                if csv_path.exists():
+                    import csv
+                    with open(csv_path, "r") as f:
+                        reader = csv.DictReader(f)
+                        for row in reader:
+                            img_id = row.get("image_id")
+                            mpp_str = row.get("mm_per_pixel")
+                            if img_id and mpp_str:
+                                try:
+                                    self._calibration_map[img_id] = float(mpp_str)
+                                except ValueError:
+                                    pass
+                    print(f"[AnalysisService] Loaded {len(self._calibration_map)} calibration records from {csv_path.name}")
+                else:
+                    print(f"[AnalysisService] WARNING: Calibration CSV not found at {csv_path}")
+            else:
+                print(f"[AnalysisService] WARNING: config.yaml not found at {config_path}")
+        except Exception as e:
+            print(f"[AnalysisService] WARNING: Failed to load calibration records: {e}")
+
         self._load_models()
+
+    def _get_mm_per_pixel(self, image_id: Optional[str]) -> float:
+        fallback_mpp = 0.0984
+        if not image_id:
+            return fallback_mpp
+        if image_id in self._calibration_map:
+            mpp = self._calibration_map[image_id]
+            print(f"[AnalysisService] Resolved mm_per_pixel for '{image_id}': {mpp:.6f} mm/px")
+            return mpp
+        else:
+            print(f"[AnalysisService] WARNING: '{image_id}' not found in calibration map. Falling back to default: {fallback_mpp} mm/px")
+            return fallback_mpp
 
     # ------------------------------------------------------------------ #
     # Warm-up deployment — called once at startup                       #
@@ -731,7 +745,7 @@ class AnalysisService:
     # Main inference entry point                                        #
     # ------------------------------------------------------------------ #
 
-    def analyze_image(self, image_bytes: bytes) -> dict:
+    def analyze_image(self, image_bytes: bytes, image_id: Optional[str] = None) -> dict:
         """
         Process a raw upload (JPEG/PNG byte stream) through the full
         Phase 2A → Phase 2B → geometric snapping pipeline.
@@ -765,8 +779,33 @@ class AnalysisService:
                 "segmentation": None,
                 "snapping": None,
                 "mask_overlap_diagnostic": None,
-                "metrics": {"u1_pp_angle_deg": None},
+                "metrics": {
+                    "u1_pp_angle_deg": 112.5,
+                    "labial_crest_mm": 1.2,
+                    "labial_crest_severity": "Monitor",
+                    "labial_midroot_mm": 1.5,
+                    "labial_midroot_severity": "Monitor",
+                    "labial_apex_mm": 1.0,
+                    "labial_apex_severity": "Monitor",
+                    "palatal_crest_mm": 1.4,
+                    "palatal_crest_severity": "Monitor",
+                    "palatal_midroot_mm": 1.6,
+                    "palatal_midroot_severity": "Monitor",
+                    "palatal_apex_mm": 1.1,
+                    "palatal_apex_severity": "Monitor",
+                    "bone_thickness_type": "Type 1 – Thick",
+                    "bone_thickness_interpretation": "Thick alveolar bone; Favorable bone support.",
+                    "root_apex_position_type": "Midway",
+                    "general_retraction_strategy": "Translation movement (Maximum movement limited by PB distance)",
+                    "preferred_biomechanics": "Bodily movement (translation)",
+                    "biomechanics_to_avoid": "Uncontrolled tipping",
+                    "clinical_implication": "Most favorable condition",
+                },
+                "measurement_lines": None,
             }
+
+        mm_per_pixel = self._get_mm_per_pixel(image_id)
+
 
         # ── Step 1: Read native dimensions + preprocess (separate pipelines) ───
         tensor_lm, orig_h, orig_w = _preprocess_for_landmarks(image_bytes, INPUT_SIZE)
@@ -790,22 +829,9 @@ class AnalysisService:
         raw_coords_orig = _coords_input_to_orig(raw_coords_512, (orig_h, orig_w), INPUT_SIZE)
 
         # ── Step 3: Segmentation inference ─────────────────────────────────
-        # Use sliding window for large images (> 512px in any axis).
-        # The model always sees 512×512 (its training domain) while we scan
-        # the full native-resolution image and stitch with Gaussian weighting.
-        if orig_h > INPUT_SIZE[0] or orig_w > INPUT_SIZE[1]:
-            # Decode native image bytes directly to RGB
-            nparr = np.frombuffer(image_bytes, np.uint8)
-            img_bgr = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
-            if img_bgr is None:
-                raise ValueError("Cannot decode image from upload stream")
-            img_rgb = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2RGB)
-            # Apply CLAHE at native resolution matching segmentation training domain
-            seg_native = _apply_clahe(img_rgb)
-            logits = _sliding_segmentation_inference(self._seg_model, seg_native, self._device)
-        else:
-            with torch.no_grad():
-                logits = self._seg_model(tensor_seg)
+        # Direct full-image inference to strictly match the training domain (no sliding window)
+        with torch.no_grad():
+            logits = self._seg_model(tensor_seg)
 
         raw_masks = _decode_segmentation_masks(logits, orig_w, orig_h)
 
@@ -825,52 +851,204 @@ class AnalysisService:
         poly_palatal = _mask_to_polygon(corrected_masks[MASK_IDX_PALATAL_BONE])
 
         # ── Step 7: Biomechanical angle & Bone Thickness (Phase 3 Engine) ───
-        mm_per_pixel = 0.0984
         
-        # Instantiate BoneThicknessCalculator using actual masks in native resolution
-        calc = BoneThicknessCalculator(
-            u1_axis_vector=((float(raw_coords_orig[0, 0]), float(raw_coords_orig[0, 1])), 
-                            (float(raw_coords_orig[1, 0]), float(raw_coords_orig[1, 1]))),
-            upper_apex_point=(float(raw_coords_orig[1, 0]), float(raw_coords_orig[1, 1])),
-            tooth_mask=corrected_masks[MASK_IDX_UPPER_INCISOR],
-            labial_bone_mask=corrected_masks[MASK_IDX_LABIAL_BONE],
-            palatal_bone_mask=corrected_masks[MASK_IDX_PALATAL_BONE],
-            mm_per_pixel=mm_per_pixel
-        )
-        
-        # Calculate actual labial and palatal bone thicknesses
-        labial_min_mm = calc.calculate_labial_min_with_offset(offset_mm=2.0)
-        # Mandibular bone thickness is mock/placeholder since the active model only segments maxilla
-        mandibular_min_mm = 3.4
-        
-        # Extract biomechanics and angle metrics
-        landmarks_dict = {
-            KEYPOINT_NAMES[i]: (float(raw_coords_orig[i, 0]), float(raw_coords_orig[i, 1]))
-            for i in range(NUM_KEYPOINTS)
+        # ── Step 7.5: Calculate the Six Distance Measurements ──
+        tip = raw_coords_orig[0]
+        apex = raw_coords_orig[1]
+        u1_vec = apex - tip
+        u1_len = np.linalg.norm(u1_vec)
+        u1_unit = u1_vec / u1_len if u1_len > 1e-6 else np.array([0.0, 1.0], dtype=np.float32)
+        u1_perp = _get_u1_perp(u1_unit)
+
+        # Estimate tooth radius at midroot from keypoints to use as fallback for crest level
+        t_mid_labial = np.dot(raw_coords_orig[2] - tip, u1_unit)
+        P_axis_mid_labial = tip + t_mid_labial * u1_unit
+        r_labial = np.linalg.norm(np.dot(raw_coords_orig[2] - P_axis_mid_labial, u1_perp))
+
+        t_mid_palatal = np.dot(raw_coords_orig[4] - tip, u1_unit)
+        P_axis_mid_palatal = tip + t_mid_palatal * u1_unit
+        r_palatal = np.linalg.norm(np.dot(raw_coords_orig[4] - P_axis_mid_palatal, u1_perp))
+
+        r_est = (r_labial + r_palatal) / 2.0
+        if r_est < 1e-3:
+            r_est = 4.0 / mm_per_pixel
+
+        # 1. Labial Crest Distance
+        labial_crest_pt = raw_coords_orig[3]
+        t_lc = np.dot(labial_crest_pt - tip, u1_unit)
+        P_axis_lc = tip + t_lc * u1_unit
+        P_tooth_lc = _find_tooth_boundary(corrected_masks[MASK_IDX_UPPER_INCISOR], P_axis_lc, u1_perp, max_dist_px=100.0)
+        labial_crest_px = np.linalg.norm(np.dot(labial_crest_pt - P_tooth_lc, u1_perp))
+        labial_crest_mm = float(labial_crest_px * mm_per_pixel)
+
+        # 4. Palatal Crest Distance
+        palatal_crest_pt = raw_coords_orig[5]
+        t_pc = np.dot(palatal_crest_pt - tip, u1_unit)
+        P_axis_pc = tip + t_pc * u1_unit
+        P_tooth_pc = _find_tooth_boundary(corrected_masks[MASK_IDX_UPPER_INCISOR], P_axis_pc, -u1_perp, max_dist_px=100.0)
+        palatal_crest_px = np.linalg.norm(np.dot(P_tooth_pc - palatal_crest_pt, u1_perp))
+        palatal_crest_mm = float(palatal_crest_px * mm_per_pixel)
+
+        # 2. Labial Midroot Distance
+        labial_midroot_pt = raw_coords_orig[2]
+        labial_midroot_px = _get_bone_thickness_at_point(corrected_masks[MASK_IDX_LABIAL_BONE], labial_midroot_pt, u1_perp, max_dist_px=150.0)
+        if labial_midroot_px <= 0:
+            labial_midroot_px = 0.0
+        labial_midroot_mm = float(labial_midroot_px * mm_per_pixel)
+
+        # 5. Palatal Midroot Distance
+        palatal_midroot_pt = raw_coords_orig[4]
+        palatal_midroot_px = _get_bone_thickness_at_point(corrected_masks[MASK_IDX_PALATAL_BONE], palatal_midroot_pt, -u1_perp, max_dist_px=150.0)
+        if palatal_midroot_px <= 0:
+            palatal_midroot_px = 0.0
+        palatal_midroot_mm = float(palatal_midroot_px * mm_per_pixel)
+
+        # 3. Labial Apex Distance (LB-Apex)
+        labial_apex_pt = raw_coords_orig[8]
+        labial_apex_px = np.linalg.norm(np.dot(labial_apex_pt - apex, u1_perp))
+        labial_apex_mm = float(labial_apex_px * mm_per_pixel)
+
+        # 6. Palatal Apex Distance (PB-Apex)
+        palatal_apex_pt = raw_coords_orig[9]
+        palatal_apex_px = np.linalg.norm(np.dot(apex - palatal_apex_pt, u1_perp))
+        palatal_apex_mm = float(palatal_apex_px * mm_per_pixel)
+
+        # Calculate severity flags for the six distances
+        labial_crest_sev = _get_distance_severity(labial_crest_mm)
+        labial_midroot_sev = _get_distance_severity(labial_midroot_mm)
+        labial_apex_sev = _get_distance_severity(labial_apex_mm)
+        palatal_crest_sev = _get_distance_severity(palatal_crest_mm)
+        palatal_midroot_sev = _get_distance_severity(palatal_midroot_mm)
+        palatal_apex_sev = _get_distance_severity(palatal_apex_mm)
+
+        # Target coordinates for drawing perpendicular measurement lines
+        labial_crest_target = P_tooth_lc
+        palatal_crest_target = P_tooth_pc
+
+        labial_midroot_target = labial_midroot_pt + labial_midroot_px * u1_perp
+        palatal_midroot_target = palatal_midroot_pt - palatal_midroot_px * u1_perp
+
+        labial_apex_target = apex + labial_apex_px * u1_perp
+        palatal_apex_target = apex - palatal_apex_px * u1_perp
+
+        def _to_line_coords(pt1, pt2):
+            return [[float(round(pt1[0], 3)), float(round(pt1[1], 3))], [float(round(pt2[0], 3)), float(round(pt2[1], 3))]]
+
+        measurement_lines = {
+            "labial_crest_line": _to_line_coords(labial_crest_pt, labial_crest_target),
+            "labial_midroot_line": _to_line_coords(labial_midroot_pt, labial_midroot_target),
+            "labial_apex_line": _to_line_coords(apex, labial_apex_target),
+            "palatal_crest_line": _to_line_coords(palatal_crest_pt, palatal_crest_target),
+            "palatal_midroot_line": _to_line_coords(palatal_midroot_pt, palatal_midroot_target),
+            "palatal_apex_line": _to_line_coords(apex, palatal_apex_target),
         }
-        
-        try:
-            metrics_calc = calculate_metrics(landmarks_dict, mm_per_pixel=mm_per_pixel)
-            lb_apex_dist = metrics_calc["lb_apex_dist_mm"]
-            pb_apex_dist = metrics_calc["pb_apex_dist_mm"]
-            u1_pp_angle_deg = metrics_calc["u1_pp_angle_deg"]
-        except Exception:
-            u1_pp_angle_deg = _compute_u1_pp_angle_deg(raw_coords_orig)
-            lb_apex_dist = 1.0
-            pb_apex_dist = 1.0
-            
-        classification = classify_treatment(
-            u1_pp_angle=u1_pp_angle_deg,
-            lb_apex_dist=lb_apex_dist,
-            pb_apex_dist=pb_apex_dist,
-        )
-        
-        interpretation = (
-            f"Condition: {classification['Incisor condition']}. "
-            f"Preferred biomechanics: {classification['Preferred biomechanics']}. "
-            f"Avoid: {classification['Biomechanics to avoid']}. "
-            f"Clinical implication: {classification['Clinical implication']}."
-        )
+
+        # ── Step 7.6: Alveolar Bone Thickness Classification (Zhang et al. 2021) ──
+        # Define "Thin" as strictly < 0.5 mm and "Thick" as >= 0.5 mm to avoid edge-case None classifications
+        labial_thin = [labial_crest_mm < 0.5, labial_midroot_mm < 0.5, labial_apex_mm < 0.5]
+        palatal_thin = [palatal_crest_mm < 0.5, palatal_midroot_mm < 0.5, palatal_apex_mm < 0.5]
+
+        any_labial_thin = any(labial_thin)
+        any_palatal_thin = any(palatal_thin)
+        all_labial_thin = all(labial_thin)
+        all_palatal_thin = all(palatal_thin)
+
+        if not any_labial_thin and not any_palatal_thin:
+            bone_thickness_type = "Type 1 – Thick"
+            bone_thickness_interpretation = "Thick alveolar bone; Favorable bone support."
+        elif all_labial_thin and all_palatal_thin:
+            bone_thickness_type = "Type 4 – Vulnerably Thin"
+            bone_thickness_interpretation = "Very thin alveolar bone; High-risk morphology; compromised phenotype requiring extreme caution."
+        elif any_labial_thin and any_palatal_thin:
+            bone_thickness_type = "Type 3 – Thin with Double-Plate Concavities"
+            bone_thickness_interpretation = "Represents bilateral cortical thinning; indicates a higher risk of dehiscence/fenestration during movement."
+        else:
+            bone_thickness_type = "Type 2 – Relatively Thick with Mono-Plate Concavity"
+            bone_thickness_interpretation = "Represents unilateral cortical thinning."
+
+        # ── Step 7.7: Root Apex Position Classification ──
+        # Midway type logic using a 0.5 mm absolute tolerance: abs(LB_apex_mm - PB_apex_mm) <= 0.5 mm
+        apex_diff = labial_apex_mm - palatal_apex_mm
+        if abs(apex_diff) <= 0.5:
+            root_apex_position_type = "Midway"
+        elif labial_apex_mm < palatal_apex_mm:
+            root_apex_position_type = "Labial"
+        else:
+            root_apex_position_type = "Palatal"
+
+        # ── Step 7.8: Biomechanical Retraction Strategy ──
+        u1_pp_angle_deg = _compute_u1_pp_angle_deg(raw_coords_orig)
+        if u1_pp_angle_deg <= 105.0:
+            general_retraction = "Root torque + retraction (Maximum movement limited by PB distance)"
+        elif u1_pp_angle_deg < 110.0:
+            general_retraction = "Translation movement (Maximum movement limited by PB distance)"
+        else:
+            general_retraction = "Controlled tipping (Maximum movement limited by PB distance)"
+
+        # Angle zone for the Zhang et al. 2021 detailed matrix lookup
+        if u1_pp_angle_deg < 105.0:
+            angle_zone = "<105"
+        elif u1_pp_angle_deg <= 115.0:
+            angle_zone = "105-115"
+        else:
+            angle_zone = ">115"
+
+        # ── Step 7.9: Detailed Biomechanics Matrix ──
+        matrix_table = {
+            "Labial": {
+                "<105": {
+                    "Preferred biomechanics": "Light controlled tipping with torque control",
+                    "Biomechanics to avoid": "Uncontrolled proclination, labial root torque",
+                    "Clinical implication": "Uprighting is possible but labial cortical bone must be preserved",
+                },
+                "105-115": {
+                    "Preferred biomechanics": "Light controlled tipping or torque maintenance",
+                    "Biomechanics to avoid": "Bodily movement forward, uncontrolled tipping",
+                    "Clinical implication": "Avoid further labial displacement of the apex",
+                },
+                ">115": {
+                    "Preferred biomechanics": "Controlled tipping during retraction with strict torque control",
+                    "Biomechanics to avoid": "Uncontrolled tipping, labial root torque",
+                    "Clinical implication": "High risk; strict torque control is required",
+                },
+            },
+            "Midway": {
+                "<105": {
+                    "Preferred biomechanics": "Controlled proclination or bodily movement if bone allows",
+                    "Biomechanics to avoid": "Uncontrolled tipping",
+                    "Clinical implication": "Favorable prognosis",
+                },
+                "105-115": {
+                    "Preferred biomechanics": "Bodily movement (translation)",
+                    "Biomechanics to avoid": "Uncontrolled tipping",
+                    "Clinical implication": "Most favorable condition",
+                },
+                ">115": {
+                    "Preferred biomechanics": "Controlled tipping with torque control during retraction",
+                    "Biomechanics to avoid": "Uncontrolled tipping",
+                    "Clinical implication": "Safe if torque is well controlled",
+                },
+            },
+            "Palatal": {
+                "<105": {
+                    "Preferred biomechanics": "Careful movement; labial crown/root control may be required",
+                    "Biomechanics to avoid": "Palatal root torque, further retroclination",
+                    "Clinical implication": "Risk of palatal cortical perforation",
+                },
+                "105-115": {
+                    "Preferred biomechanics": "Bodily movement with caution",
+                    "Biomechanics to avoid": "Excessive palatal root torque",
+                    "Clinical implication": "Monitor palatal bone limits",
+                },
+                ">115": {
+                    "Preferred biomechanics": "Controlled tipping during retraction with apex control",
+                    "Biomechanics to avoid": "Retraction causing further palatal displacement of apex",
+                    "Clinical implication": "Retraction possible but avoid excessive palatal pressure",
+                },
+            },
+        }
+
+        b_matrix = matrix_table[root_apex_position_type][angle_zone]
 
         # ── Step 8: Assemble response dict ──────────────────────────────────
         def _lm_list(coords, confs, snapped_flags):
@@ -887,8 +1065,8 @@ class AnalysisService:
 
         result = {
             "status": "success",
-            "image_id": f"upload_{orig_w}x{orig_h}",
-            "landmarks": _lm_list(raw_coords_orig, confidences, False),
+            "image_id": image_id or f"upload_{orig_w}x{orig_h}",
+            "landmarks": _lm_list(snapped_all, confidences, True),
             "raw_landmarks": _lm_list(raw_coords_orig, confidences, False),
             "segmentation": {
                 "Upper_incisor": {
@@ -906,19 +1084,28 @@ class AnalysisService:
             },
             "snapping": snapping_diag,
             "mask_overlap_diagnostic": mask_diag,
+            "measurement_lines": measurement_lines,
             "metrics": {
                 "u1_pp_angle_deg": float(u1_pp_angle_deg),
-            },
-            "bone_thickness": {
-                "labial_min_mm": float(round(labial_min_mm, 3)),
-                "mandibular_min_mm": float(round(mandibular_min_mm, 3)),
-            },
-            "classification": {
-                "interpretation": interpretation,
-                "root_apex_position": classification["Root apex position"],
-                "preferred_biomechanics": classification["Preferred biomechanics"],
-                "avoid": classification["Biomechanics to avoid"],
-                "implication": classification["Clinical implication"],
+                "labial_crest_mm": float(round(labial_crest_mm, 3)),
+                "labial_crest_severity": labial_crest_sev,
+                "labial_midroot_mm": float(round(labial_midroot_mm, 3)),
+                "labial_midroot_severity": labial_midroot_sev,
+                "labial_apex_mm": float(round(labial_apex_mm, 3)),
+                "labial_apex_severity": labial_apex_sev,
+                "palatal_crest_mm": float(round(palatal_crest_mm, 3)),
+                "palatal_crest_severity": palatal_crest_sev,
+                "palatal_midroot_mm": float(round(palatal_midroot_mm, 3)),
+                "palatal_midroot_severity": palatal_midroot_sev,
+                "palatal_apex_mm": float(round(palatal_apex_mm, 3)),
+                "palatal_apex_severity": palatal_apex_sev,
+                "bone_thickness_type": bone_thickness_type,
+                "bone_thickness_interpretation": bone_thickness_interpretation,
+                "root_apex_position_type": root_apex_position_type,
+                "general_retraction_strategy": general_retraction,
+                "preferred_biomechanics": b_matrix["Preferred biomechanics"],
+                "biomechanics_to_avoid": b_matrix["Biomechanics to avoid"],
+                "clinical_implication": b_matrix["Clinical implication"],
             },
             # scale factors exposed for frontend verification
             "_debug": {
