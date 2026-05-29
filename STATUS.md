@@ -39,6 +39,21 @@ Task queue from `product.md`:
   - Output: models/tversky_deepLabV3plus_resnet34_20250529_20260529_094221/best_model.pt
   - Config: num_classes=4 (BG+3 fg), scripts/train_tversky.py committed to git
 
+## Phase 2D: COMPLETE ✅
+
+All 4 tasks completed. Champion model: TSK-04 (Dice=0.8827).
+
+TSK-05 Final Evaluation ✅ — 2026-05-29
+- Inference: HRNet-W32 landmark detection + TSK-04 (sliding window 512px/256stride) + geometric snapping
+- Val set: 63 images (20 skipped — missing gt landmarks)
+- **Overall MRE: 1.568 mm | SDR@2mm: 82.2%**
+- Per-landmark: Upper_tip=1.47mm(95%), Upper_apex=1.47mm(78%), Labial_midroot=0.74mm(100%), Labial_crest=0.96mm(98%), Palatal_midroot=0.92mm(98%), Palatal_crest=0.97mm(95%), ANS=2.50mm(54%), PNS=2.20mm(59%), LB=2.00mm(75%), PB=2.45mm(70%)
+- Analysis service: updated to TSK-04 champion model path
+- Report: reports/visual_results/tsk05_final_eval_20260529_102640.json
+
+Full experiment comparison: `reports/experiment_results.md`
+1764 total experiments scanned. New champion beats previous best by +0.0238.
+
 ---
 
 ## Auto-Research Loop (iter1) — 🟡 RUNNING (background)

@@ -692,7 +692,7 @@ class AnalysisService:
         seg_ckpt_path = (
             Path(os.environ["USER_LOCAL_MODEL_PATH"])
             if os.environ.get("USER_LOCAL_MODEL_PATH")
-            else ROOT / "models" / "finalDeepRun_deeplabv3plus_resnet34_lr0.0003_wd0.001_bs4x4_150ep_20260527_195758" / "best_model.pt"
+            else ROOT / "models" / "tversky_deepLabV3plus_resnet34_20250529_20260529_094221" / "best_model.pt"
         )
         if not seg_ckpt_path.exists():
             print(
@@ -705,7 +705,7 @@ class AnalysisService:
             )
             self._seg_model = None
         else:
-            sm = _build_segmentation_model(4)   # ← 4 classes: Background + 3 foreground
+            sm = _build_segmentation_model(4)   # 4-class Tversky+BoundaryDice champion (Dice=0.8827)
             seg_state = torch.load(seg_ckpt_path, map_location=self._device, weights_only=False)
             cleaned_state = {k.replace('module.', ''): v for k, v in seg_state.items()}
             sm.load_state_dict(cleaned_state, strict=True)
