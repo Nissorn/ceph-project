@@ -31,7 +31,13 @@ Task queue from `product.md`:
   - Training: 189 train / 51 val crops, patient-level split
   - Result: best val_loss=0.1431 at epoch 40/60 (early stopping)
   - Output: t_ef460994/best_model.pt + config.json
-- [ ] **TSK-04:** Tversky + BoundaryDice Fine-Tuning (Fallback) — fine-tune 512px baseline with Tversky Loss (α=0.7, β=0.3)
+- [x] **TSK-04:** Tversky + BoundaryDice Fine-Tuning — ✅ COMPLETED GPU 4
+  - Architecture: DeepLabV3Plus + resnet34, fine-tuned from 512px baseline
+  - Loss: 0.6×Tversky(α=0.7,β=0.3) + 0.4×BoundaryDice
+  - Training: 291 train / 71 val records, patient-level split, 40 epochs (early stopping)
+  - Result: **best_val_dice=0.8827** vs baseline 0.8588 (+0.024 improvement)
+  - Output: models/tversky_deepLabV3plus_resnet34_20250529_20260529_094221/best_model.pt
+  - Config: num_classes=4 (BG+3 fg), scripts/train_tversky.py committed to git
 
 ---
 
