@@ -1,10 +1,19 @@
 import React, { useEffect, useState } from 'react';
 
 export default function ThemeToggle() {
-  // Mirror the class already set by the inline <script> — dark is the default
-  const [isDark, setIsDark] = useState(true);
+  // Default to light (no 'dark' class on <html>). useEffect syncs with actual
+  // DOM state on mount; localStorage overrides only if user previously set a preference.
+  const [isDark, setIsDark] = useState(() => {
+    if (typeof window !== 'undefined') {
+      const saved = localStorage.getItem('theme');
+      if (saved === 'dark')  return true;
+      if (saved === 'light') return false;
+    }
+    return false; // light by default
+  });
 
   useEffect(() => {
+    // Sync React state with whatever the DOM currently shows (handles SSR hydration)
     setIsDark(document.documentElement.classList.contains('dark'));
   }, []);
 
@@ -25,7 +34,7 @@ export default function ThemeToggle() {
       onClick={toggle}
       aria-label={isDark ? 'Switch to light mode' : 'Switch to dark mode'}
       title={isDark ? 'Switch to light mode' : 'Switch to dark mode'}
-      className="w-8 h-8 flex items-center justify-center rounded-lg text-slate-500 dark:text-slate-400 hover:text-slate-700 dark:hover:text-slate-100 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors duration-150"
+      className="w-8 h-8 flex items-center justify-center rounded-lg text-slate-500 hover:text-slate-700 hover:bg-slate-100 transition-colors duration-150"
     >
       {isDark ? (
         <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">

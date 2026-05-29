@@ -1,27 +1,59 @@
+# docker-compose.yml — Cephalometric Landmark Detection full-stack
+#
+# Architecture:
+#   api  (FastAPI)  — HRNet-W32 inference engine, port 8123 (on Mac host)
+#   web  (Astro)    — static SPA, port 4321
+#
+# Model weights (outputs/checkpoints/fold*.pth) are mounted as a volume
+# and NOT baked into the image layer (per product.md guardrails).
+
 services:
+  # ── FastAPI inference service ───────────────────────────────────────────────
   api:
     build:
-      context: ./backend
-      dockerfile: Dockerfile
+      context: .  # 🌟 แก้ไขจุดบิลด์ให้เป็น Root ของโปรเจกต์ เพื่อดึงโฟลเดอร์ src เข้าคอนเทนเนอร์ได้
+      dockerfile: backend/Dockerfile
     ports:
-      - "8000:8000"
+      - "8123:8000"  # 🌟 หนีพอร์ตชนบน Mac ยิงเข้าเครื่อง Mac ด้วย 8123 ทะลุเข้าตู้ด้วย 8000
     environment:
-      - PYTHONPATH=/app:/app/backend
+      # Override inference_service.py default path to match Docker volume mount.
+      MODEL_CHECKPOINT_DIR: /app/model-weights/checkpoints
+      PYTHONPATH: /app:/app/backend  # 🌟 บังคับชี้ทิศทางให้โค้ดหาโมดูล 'src' เจอ 100%
     volumes:
-      - ./backend/app:/app/app
-      - ./data:/app/data
-      - ./backend/models:/app/models
-      - ./outputs:/app/outputs
-      - ./src:/app/src
+      - ./outputs/checkpoints:/app/model-weights/checkpoints:ro
+      - ./src:/app/src  # 🌟 เมาท์โฟลเดอร์ src ล่าสุดของคุณเข้าไปในตู้
+      - ./backend/app:/app/backend/app
       - ./config.yaml:/app/config.yaml
+      - ./data:/app/data
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/api/v1/health')"]
+      interval: 15s  # ปรับให้ตรวจจับไวขึ้น
+      timeout: 10s
+      start_period: 40s
+      retries: 3
+    restart: unless-stopped
 
+  # ── Astro static frontend ───────────────────────────────────────────────────
   web:
     build:
       context: ./frontend
       dockerfile: Dockerfile
+      args:
+        # 🌟 บังคับเบราว์เซอร์บน Mac ให้ส่งรูปพุ่งตรงเข้าพอร์ตหลังบ้านที่เราเปิดหลบไว้ (8123)
+        VITE_API_URL: http://localhost:8123/api/v1
     ports:
       - "4321:4321"
     volumes:
       - ./frontend/src:/app/src:ro
     depends_on:
-      - api
+      api:
+        condition: service_healthy
+    environment:
+      NODE_ENV: production
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:4321/"]
+      interval: 30s
+      timeout: 5s
+      start_period: 10s
+      retries: 3
+    restart: unless-stopped

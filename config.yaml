@@ -26,27 +26,40 @@ keypoints:
   calibration_mm: 30.0
 
 model:
+  # architecture: "hrnet_w32" (default) | "hrnet_w18" (fallback-c: capacity reduction)
   architecture: "hrnet_w32"
-  pretrained: "coco"
+  # pretrained_source: "coco" (default) | "ceph_miccai2015" | "ceph_cldetection2023" | "custom"
+  # Pivot to ceph_* if v6 MRE > 4mm (contingency-b: domain-pretrained weights)
+  pretrained_source: "coco"
+  # Path to checkpoint file. Required when pretrained_source is "custom" or ceph_*.
+  pretrained_checkpoint: null
   input_size: [512, 512]
   heatmap_size: [256, 256]
-  sigma: 2.0
+  sigma: 3.0
+  # Landmark-specific sigmas for adaptive heatmap generation.
+  # Small sigma (sharp): easy/anterior landmarks — tight Gaussian for precision.
+  # Large sigma (diffuse): hard/posterior landmarks — forgiving for noisy regions.
+  # Format: list of 10 floats aligned with keypoints.names order.
+  # Keypoints: Upper_tip(0), Upper_apex(1), Labial_midroot(2), Labial_crest(3),
+  #            Palatal_midroot(4), Palatal_crest(5), ANS(6), PNS(7), LB(8), PB(9)
+  landmark_sigmas: [2.0, 3.5, 2.5, 2.0, 3.0, 2.0, 4.5, 4.5, 4.0, 5.0]
 
 training:
   batch_size: 4
   epochs: 150         # 150 epochs with partial freeze + differential LR
   lr: 0.001
   weight_decay: 0.001   # heavy L2 regularization to combat overfitting on 92 images
-  device: "cuda"       # "cuda" for GPU server, "mps" for Mac
-  num_workers: 0
+  device: "mps"        # "mps" for Mac, "cuda" for GPU server
+  num_workers: 0        # 0 for MPS restriction
   eval_strategy: "5fold"  # "5fold" for 5-fold CV (use get_kfold_splits)
   k_folds: 5
-  early_stopping_patience: 15   # stop if val_mre doesn't improve for 15 evaluation windows (~15 epochs)
-  freeze_backbone: false        # unfrozen from Epoch 1 — full gradient flow for medical domain transfer
-  warmup_epochs: 0             # not used when freeze_backbone=false
-  partial_freeze: true          # freeze Stage 1+2, train Stage 3+4 + head only
-  backbone_lr: 0.00001          # 1e-5 — very small LR for unfrozen backbone stages
-  head_lr: 0.001                # 1e-3 — normal LR for heatmap head
+  early_stopping_patience: 15
+  freeze_backbone: false
+  warmup_epochs: 0
+  partial_freeze: true
+  backbone_lr: 0.0001
+  head_lr: 0.0001
+  weight_decay: 0.002
 
 augmentation:
   rotation_limit: 15
@@ -54,10 +67,9 @@ augmentation:
   brightness_limit: 0.2
   contrast_limit: 0.2
   clahe: true
-  horizontal_flip: false  # NEVER true — breaks lateral cephalogram anatomy
+  horizontal_flip: false
 
 phase3:
-  # PENDING confirmation from Dr.
   tipping_threshold_deg: null
   translation_threshold_mm: null
   treatment_classes:
@@ -68,7 +80,16 @@ phase3:
     - "Extrusion"
     - "Intrusion"
 
+phase2c:
+  backbone_unfreeze_epoch: 20
+  stage2_lr: 0.00001
+  inject_training_noise: false
+  min_class_support: 5  # Classes with fewer positives are flagged "insufficient_data" and excluded from pos_weight + AUC
+  # Calibrate noise_sigma_pixels to actual Phase 2 HRNet MRE once v6 benchmarks are available.
+  # At 0.0984 mm/px, 15 px ≈ 1.5 mm which approximates expected MRE for a small-dataset HRNet.
+  noise_sigma_pixels: 15.0
+
 evaluation:
   sdr_thresholds_mm: [2.0, 2.5, 3.0, 4.0]
-  confidence_low_threshold: 0.3  # below this → flag as low confidence (red dot)
+  confidence_low_threshold: 0.3
   tta_n_augments: 5

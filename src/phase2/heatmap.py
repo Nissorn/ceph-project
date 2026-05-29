@@ -11,7 +11,7 @@ class SoftArgmax2D(nn.Module):
     Differentiable soft-argmax for sub-pixel keypoint localization.
     Replaces naive argmax which is quantized to integer heatmap cells.
 
-   forward(heatmaps, input_size) -> (coords [B, N, 2], confidence [B, N])
+    forward(heatmaps, input_size) -> (coords [B, N, 2], confidence [B, N])
     """
 
     def __init__(self, temperature: float = 0.1):
@@ -94,6 +94,7 @@ def encode_heatmaps(
     heatmap_size: tuple[int, int],
     sigma: float = 2.0,
     input_size: tuple[int, int] = (512, 512),
+    sigma_map: np.ndarray | list | None = None,
 ) -> np.ndarray:
     """
     Encode (x, y) keypoints as Gaussian heatmaps.
@@ -102,8 +103,13 @@ def encode_heatmaps(
         keypoints: [N, 2] float32 in input_size pixel space
         valid_mask: [N] bool
         heatmap_size: (H_hm, W_hm)
-        sigma: Gaussian std dev in heatmap pixels
+        sigma: Default Gaussian std dev in heatmap pixels (fallback if no sigma_map)
         input_size: (H_in, W_in)
+        sigma_map: Optional [N] array of per-landmark sigma values.
+                   When provided, sigma_map[i] is used for landmark i instead of sigma.
+                   Enables adaptive heatmap sharpening/diffusing per landmark type:
+                     small (2.0-2.5): sharp — anterior/cusp landmarks needing precision
+                     large (4.0-5.0): diffuse — posterior/low-contrast landmarks
 
     Returns:
         heatmaps: [N, H_hm, W_hm] float32 in [0, 1]
@@ -117,17 +123,16 @@ def encode_heatmaps(
 
     heatmaps = np.zeros((N, H, W), dtype=np.float32)
 
-    # Pre-compute Gaussian kernel once
-    size = int(6 * sigma + 1)
-    half = size // 2
-    xs = np.arange(size, dtype=np.float32) - half
-    ys = np.arange(size, dtype=np.float32) - half
-    xv, yv = np.meshgrid(xs, ys, indexing='ij')
-    gaussian = np.exp(-(xv**2 + yv**2) / (2 * sigma**2)).astype(np.float32)
+    # Convert sigma_map to numpy array once (in case it's a plain Python list)
+    if sigma_map is not None and not isinstance(sigma_map, np.ndarray):
+        sigma_map = np.array(sigma_map, dtype=np.float32)
 
     for i in range(N):
         if not valid_mask[i]:
             continue
+
+        # Per-landmark sigma: use sigma_map[i] if provided, else single sigma
+        kp_sigma = sigma_map[i] if sigma_map is not None else sigma
 
         # Map keypoint to heatmap coordinates
         x_raw = keypoints[i, 0] * scale_x
@@ -138,22 +143,40 @@ def encode_heatmaps(
         x0 = int(np.clip(np.floor(x_raw), 1, W - 2))
         y0 = int(np.clip(np.floor(y_raw), 1, H - 2))
 
+        # Build full 2D Gaussian kernel for this landmark's sigma.
+        # Ensure size is ALWAYS odd so the kernel is symmetric around center.
+        # int(6*3.5+1) = 22 (even) but we need 23. Use ceil then force odd:
+        #     int(6*kp_sigma) // 2 * 2 + 1  →  ensures odd (3→7, 4→9, etc.)
+        # For kp_sigma=3.5: int(21)//2*2+1 = 10*2+1 = 21? No.
+        # int(21.0)//2 = 10. 10*2 = 20. 20+1 = 21 (too small).
+        # So use: 2 * int(np.ceil(3 * kp_sigma)) + 1
+        # For kp_sigma=3.5: 2*ceil(10.5)+1 = 2*11+1 = 23 ✓
+        # For kp_sigma=2.0: 2*ceil(6)+1 = 2*6+1 = 13 ✓
+        # For kp_sigma=4.5: 2*ceil(13.5)+1 = 2*14+1 = 29 ✓
+        size = 2 * int(np.ceil(3 * kp_sigma)) + 1
+        half = size // 2
+        xs = np.arange(size, dtype=np.float32) - half
+        ys = np.arange(size, dtype=np.float32) - half
+        xv, yv = np.meshgrid(xs, ys, indexing='ij')
+        gaussian = np.exp(-(xv**2 + yv**2) / (2 * kp_sigma**2)).astype(np.float32)
+
         # Determine patch region (clipped to heatmap bounds)
         x_lo = max(0, x0 - half)
         x_hi = min(W, x0 + half + 1)
         y_lo = max(0, y0 - half)
         y_hi = min(H, y0 + half + 1)
 
-        # Gaussian patch offset — how much of the kernel falls inside the heatmap
-        g_x_lo = max(0, half - x0)
-        g_x_hi = g_x_lo + (x_hi - x_lo)
-        g_y_lo = max(0, half - y0)
-        g_y_hi = g_y_lo + (y_hi - y_lo)
+        # Patch indices directly into the full Gaussian array.
+        # gaussian[x0-half + offset] gives the Gaussian value at heatmap index (x_lo + dx).
+        patch_x_lo = x_lo - (x0 - half)  # = x_lo + half - x0
+        patch_x_hi = patch_x_lo + (x_hi - x_lo)
+        patch_y_lo = y_lo - (y0 - half)
+        patch_y_hi = patch_y_lo + (y_hi - y_lo)
 
         # Max-pool with existing (handles overlapping near boundaries)
         heatmaps[i, y_lo:y_hi, x_lo:x_hi] = np.maximum(
             heatmaps[i, y_lo:y_hi, x_lo:x_hi],
-            gaussian[g_y_lo:g_y_hi, g_x_lo:g_x_hi],
+            gaussian[patch_y_lo:patch_y_hi, patch_x_lo:patch_x_hi],
         )
 
     return heatmaps
@@ -177,7 +200,10 @@ def decode_heatmaps(
         confidence: [B, N] float32 — peak heatmap value
     """
     if use_soft_argmax:
-        soft_argmax = SoftArgmax2D(temperature=10.0)
+        # temperature=0.1 gives beta=softplus(0.1)≈0.1 — proper soft-argmax sharpness.
+        # Previously used temperature=10.0 which produced beta≈22025, collapsing
+        # the softmax to near-hard-argmax with systematic center-bias ~10mm error.
+        soft_argmax = SoftArgmax2D(temperature=0.1)
         coords, confidence = soft_argmax(heatmaps, input_size)
     else:
         # Fallback: naive argmax (quantized)

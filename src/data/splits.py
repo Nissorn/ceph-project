@@ -111,6 +111,31 @@ def build_splits(records, n_folds=5, holdout_ratio=0.15, random_state=42):
         "folds": folds
     }
 
+def get_lopo_splits(records: list[dict]) -> list[tuple[list[str], list[str]]]:
+    """
+    Build Leave-One-Patient-Out splits from image records.
+
+    Returns list of (train_image_ids, test_image_ids) — one tuple per patient.
+    T1 and T2 of the same patient are always held out together.
+    """
+    patient_ids = sorted({r["patient_id"] for r in records})
+    pid_to_iids: dict[str, list[str]] = {}
+    for r in records:
+        pid_to_iids.setdefault(r["patient_id"], []).append(r["image_id"])
+
+    splits = []
+    for test_pid in patient_ids:
+        test_ids = pid_to_iids[test_pid]
+        train_ids = [
+            iid
+            for pid, imgs in pid_to_iids.items()
+            if pid != test_pid
+            for iid in imgs
+        ]
+        splits.append((train_ids, test_ids))
+    return splits
+
+
 def main():
     project_root = Path(__file__).resolve().parent.parent.parent
     records_path = project_root / "data" / "processed" / "landmarks_clean.json"

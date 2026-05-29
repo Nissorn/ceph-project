@@ -108,6 +108,14 @@ VERDICT: NO SIGNIFICANT OVERFITTING
 
 **Protected GPUs (never use):** 0, 3, 7 — external users
 
+## Annotation priority (LOCKED — single annotator)
+⛔ T1-only image annotations are FROZEN until all 104 paired T1+T2 images are fully annotated.
+Completing the 104 paired set is the ONLY path to unlock Phase 3 Superimposition (core clinical requirement).
+The 278 T1-only images are out of scope for annotation until paired set is 100% complete.
+
+## Known bugs remaining
+- None. All bugs from audit logged in FAILURES.md and fixed.
+
 ---
 
 ## Key Rules

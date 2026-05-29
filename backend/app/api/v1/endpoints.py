@@ -4,9 +4,11 @@ from app.services.analysis_service import analysis_service
 
 router = APIRouter()
 
-
 @router.post("/analyze", response_model=AnalysisResponse)
-async def analyze_endpoint(file: UploadFile = File(...)):
+async def analyze_endpoint(
+    file: UploadFile = File(...),
+    use_tta: bool = True,
+):
     """
     Upload a cephalogram JPEG/PNG image for full Phase 2A (HRNet-W32)
     landmark detection + Phase 2B (DeepLabV3Plus) segmentation +
