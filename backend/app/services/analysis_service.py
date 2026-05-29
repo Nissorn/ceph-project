@@ -46,10 +46,18 @@ ROOT = _parents[3] if _parents[2].name == "backend" else _parents[2]
 sys.path.insert(0, str(ROOT))
 warnings.filterwarnings("ignore")
 
-# ── constants ────────────────────────────────────────────────────────────────
+# ── constants ───────────────────────────────────────────────────────────────
 INPUT_SIZE = (512, 512)
 HEATMAP_SIZE = (256, 256)
 NUM_KEYPOINTS = 10
+
+# ── sliding window (Pipeline B — zero retraining) ───────────────────────────
+# Segmentation runs at native resolution via overlapping 512×512 patches
+# stitched with Gaussian-weighted averaging. Landmark model stays at 512×512.
+SLIDING_WINDOW_SIZE = 512        # patch resolution (matches model's training domain)
+SLIDING_STRIDE = 256             # 50% overlap → 4 patches per spatial position on average
+# Gaussian sigma = patch_size / 4 → weight falls to ~0.01 at the edges
+_SLIDING_SIGMA = SLIDING_WINDOW_SIZE / 4   # 128.0
 
 # ── Apple Silicon / Docker emulation stabilization ─────────────────────────────
 # Apple Silicon (M-series) running x86_64 Docker images triggers silent C++
@@ -310,6 +318,133 @@ def _resolve_mask_overlaps(masks: list[np.ndarray]) -> tuple[list[np.ndarray], d
     """No-op with argmax — classes are mutually exclusive by construction."""
     diag = {"note": "argmax_4class_no_overlap_resolution_needed"}
     return masks, diag
+
+
+# ── sliding window inference — Pipeline B (zero retraining) ─────────────────
+
+def _gaussian_weight_2d(size: int, sigma: float) -> np.ndarray:
+    """
+    2D Gaussian weight map centred on the patch.
+    Returns [size, size] float32 array with peak=1.0 at centre, decaying outward.
+    """
+    ax = np.arange(size, dtype=np.float32)
+    ax = np.abs(ax - (size - 1) / 2.0)   # distance from centre along one axis
+    # exp(-0.5 * (d/sigma)^2); at d=sigma → exp(-0.5)≈0.607, at d=2sigma → 0.135
+    gauss_1d = np.exp(-0.5 * (ax / sigma) ** 2)
+    # Outer product gives 2D weight; centre gets 1.0, edges get ~0.135
+    weight = gauss_1d[:, None] * gauss_1d[None, :]
+    return weight.astype(np.float32)
+
+
+def _extract_patches_with_gauss(
+    image: np.ndarray,           # [H, W, 3] uint8, full-resolution
+    patch_size: int,
+    stride: int,
+) -> tuple[list[np.ndarray], list[np.ndarray], list[tuple[int, int]]]:
+    """
+    Extract square patches from image with reflection padding at boundaries.
+    Returns (patches, gauss_weights, top_left_coords) where:
+      - patches: list of [3, patch_size, patch_size] uint8 tensors
+      - gauss_weights: list of [patch_size, patch_size] float32 weight maps
+      - top_left_coords: (row, col) pixel position of each patch in the padded canvas
+    """
+    H, W = image.shape[:2]
+    half = patch_size // 2
+
+    # Reflect-padding so we can sample a full patch at every spatial location
+    padded = np.pad(image, ((half, half), (half, half), (0, 0)), mode="reflect")
+
+    patches: list[np.ndarray] = []
+    gauss_weights: list[np.ndarray] = []
+    coords: list[tuple[int, int]] = []
+
+    for r in range(0, H, stride):
+        for c in range(0, W, stride):
+            # Clip to image extent — last patch may be smaller but the
+            # padding above guarantees a full patch is always available
+            r0 = min(r, H - 1)
+            c0 = min(c, W - 1)
+            r1 = r0 + patch_size
+            c1 = c0 + patch_size
+
+            # Extract from padded canvas (coordinates already include pad offset)
+            patch = padded[r0:r1, c0:c1]   # [patch_size, patch_size, 3]
+
+            # Build per-patch Gaussian weight (same shape, applied uniformly to all 3 channels)
+            weight = _gaussian_weight_2d(patch_size, sigma=_SLIDING_SIGMA)
+
+            patches.append(patch)
+            gauss_weights.append(weight)
+            coords.append((r, c))
+
+    return patches, gauss_weights, coords
+
+
+def _sliding_segmentation_inference(
+    seg_model: torch.nn.Module,
+    image: np.ndarray,           # [H, W, 3] uint8, full-resolution after CLAHE
+    device: torch.device,
+) -> torch.Tensor:              # [1, 4, H, W] soft logits at full resolution
+    """
+    Run 512×512 DeepLabV3+ over full-resolution image via sliding window
+    (50% overlapping 512×512 patches), stitched with per-patch Gaussian
+    weighting. Returns raw soft logits [1, 4, H, W] at native resolution.
+
+    Zero retraining — the model always sees 512×512 input (its training domain),
+    but we recover spatial detail by scanning the native-resolution image.
+    """
+    H, W = image.shape[:2]
+    patch_size = SLIDING_WINDOW_SIZE
+    stride = SLIDING_STRIDE
+
+    # Pre-compute Gaussian weight once (same for every patch)
+    base_weight = _gaussian_weight_2d(patch_size, sigma=_SLIDING_SIGMA)
+
+    # Accumulator buffers: weighted logits + weight sum (for normalisation)
+    acc_logit = np.zeros((4, H, W), dtype=np.float64)
+    acc_weight = np.zeros((H, W), dtype=np.float64)
+
+    patches, _, patch_coords = _extract_patches_with_gauss(
+        image, patch_size, stride
+    )
+
+    with torch.no_grad():
+        for i, patch in enumerate(patches):
+            r, c = patch_coords[i]
+
+            # [H, W, 3] → [1, 3, patch_size, patch_size] float32 / 255
+            tensor = (
+                torch.from_numpy(patch)
+                .float()
+                .permute(2, 0, 1)      # HWC → CHW
+                / 255.0
+                .unsqueeze(0)          # batch dim
+                .to(device)
+            )
+
+            logits: torch.Tensor = seg_model(tensor)   # [1, 4, 512, 512]
+            logits_np = logits.cpu().numpy()[0]          # [4, 512, 512]
+
+            # Locate this patch in the full-resolution canvas
+            # (r, c) is the top-left corner in image-space coordinates
+            # Blit into accumulators with Gaussian weight
+            rh0, rh1 = r, min(r + patch_size, H)
+            ch0, ch1 = c, min(c + patch_size, W)
+
+            # Crop weight and logits to visible region (patch may extend beyond image)
+            w_vis = base_weight[:rh1 - rh0, :ch1 - ch0]
+            for cls in range(4):
+                acc_logit[cls, rh0:rh1, ch0:ch1] += (logits_np[cls, :rh1 - rh0, :ch1 - ch0] * w_vis)
+            acc_weight[rh0:rh1, ch0:ch1] += w_vis
+
+    # Normalise by accumulated weight — this is the Gaussian-blended average
+    # Guard against /0 (shouldn't happen with padding)
+    acc_weight = np.maximum(acc_weight, 1e-8)
+    for cls in range(4):
+        acc_logit[cls] /= acc_weight
+
+    # Return as [1, 4, H, W] float32 tensor (matches _decode_segmentation_masks interface)
+    return torch.from_numpy(acc_logit[np.newaxis].astype(np.float32))
 
 
 # ── geometric snapping helpers ──────────────────────────────────────────────
@@ -652,8 +787,19 @@ class AnalysisService:
         raw_coords_orig = _coords_input_to_orig(raw_coords_512, (orig_h, orig_w), INPUT_SIZE)
 
         # ── Step 3: Segmentation inference ─────────────────────────────────
-        with torch.no_grad():
-            logits = self._seg_model(tensor_seg)
+        # Use sliding window for large images (> 512px in any axis).
+        # The model always sees 512×512 (its training domain) while we scan
+        # the full native-resolution image and stitch with Gaussian weighting.
+        if orig_h > INPUT_SIZE[0] or orig_w > INPUT_SIZE[1]:
+            # Re-decode image at full resolution for sliding window
+            seg_native = _preprocess_for_segmentation(image_bytes, (orig_h, orig_w))[0]
+            seg_native = seg_native.squeeze(0).permute(1, 2, 0).cpu().numpy().astype(np.uint8)
+            # Apply CLAHE at native resolution
+            seg_native = _apply_clahe(seg_native)
+            logits = _sliding_segmentation_inference(self._seg_model, seg_native, self._device)
+        else:
+            with torch.no_grad():
+                logits = self._seg_model(tensor_seg)
 
         raw_masks = _decode_segmentation_masks(logits, orig_w, orig_h)
 
