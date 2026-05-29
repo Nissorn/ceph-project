@@ -57,8 +57,32 @@ TSK-05 Final Evaluation ✅ — 2026-05-29
 - Analysis service: updated to TSK-04 champion model path
 - Report: reports/visual_results/tsk05_final_eval_20260529_102640.json
 
-Full experiment comparison: `reports/experiment_results.md`
-1764 total experiments scanned. New champion beats previous best by +0.0238.
+TSK-06 Overfitting Analysis ✅ — 2026-05-29
+- Model: TSK-04 Tversky+BoundaryDice (tversky_deepLabV3plus_resnet34_20260529_094221)
+- Report: workspaces/t_aa722de6/overfitting_report.json
+
+CHECK 1 — Training Curves (fine-tuning re-run, patience=10):
+- Overfitting signal: MILD — val_loss rose 0.1203→0.1285 while train_loss fell 0.1107→0.1077 in last quarter
+- Best val_dice=0.9049 at epoch 5; early stopped at epoch 15
+- Root cause: fine-tuning an already-converged model; val_loss was already near minimum at epoch 1
+- Note: signal is from re-fine-tuning, NOT from the original TSK-04 model training
+
+CHECK 2 — 5-Fold Cross-Validation (patient-level, 30 epochs, patience=7):
+- Fold Dice: 0.9089, 0.9075, 0.9061, 0.9065, 0.9021
+- Mean: 0.9062 ± 0.0023 — CV_stability=STABLE (std < 0.02 threshold)
+- Consistent across all folds — no fold is an outlier
+
+CHECK 3 — Prediction Sanity (362 images, trained model):
+- Mean Dice: 0.9200 ± 0.0239 | Median: 0.9258
+- Failures (Dice<0.5): 0 (0.0%) | Good (Dice≥0.8): 361 (99.7%)
+- Per-class: Upper_incisor=0.918, Labial_bone=0.858, Palatal_bone=0.904
+- Min Dice=0.705 (no catastrophic failures)
+
+VERDICT: NO SIGNIFICANT OVERFITTING
+- Overfitting signal in Check 1 is artifact of re-fine-tuning from an already-converged checkpoint
+- K-fold CV is STABLE (std=0.0023) — model generalizes consistently
+- No failures, 99.7% images Dice≥0.8 — model is well-calibrated
+- Recommendation: TSK-04 model is safe for deployment
 
 ---
 
