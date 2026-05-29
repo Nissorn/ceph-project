@@ -44,7 +44,7 @@ export default function DashboardApp() {
      
     // Deterministic network timeout protection via AbortController
     const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 35000); // 35 seconds max boundary
+    const timeoutId = setTimeout(() => controller.abort(), 120000); // 120 seconds max boundary
 
     try {
       const formData = new FormData();
@@ -151,7 +151,7 @@ export default function DashboardApp() {
     } catch (err: any) {
       console.error("Analysis failed:", err);
       if (err.name === 'AbortError') {
-        setError('Analysis request timed out after 35 seconds. Verify inference engine availability.');
+        setError('Analysis request timed out after 120 seconds. Verify inference engine availability.');
       } else {
         setError(err.message || 'Failed to connect to the backend analysis service.');
       }
