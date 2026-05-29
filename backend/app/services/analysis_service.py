@@ -34,7 +34,8 @@ from scipy.spatial.distance import euclidean
 
 # ── project root ──────────────────────────────────────────────────────────────
 # Inside Docker: WORKDIR=/app, volume ./backend/app:/app/app maps to /app/app/.
-# With ./data:/app/data and ./outputs:/app/outputs mounts, use parents[2]:
+# With ./backend/models:/app/models, ./data:/app/data, ./outputs:/app/outputs
+# mounts, use parents[2]:
 #   /app/app/services/analysis_service.py
 #     parents[0] = /app/app/services
 #     parents[1] = /app/app

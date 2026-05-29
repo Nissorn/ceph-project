@@ -10,7 +10,7 @@ services:
     volumes:
       - ./backend/app:/app/app
       - ./data:/app/data
-      - ./models:/app/models
+      - ./backend/models:/app/models
       - ./outputs:/app/outputs
       - ./src:/app/src
 
