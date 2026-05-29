@@ -36,8 +36,16 @@ ROOT = Path(__file__).resolve().parent.parent.parent
 sys.path.insert(0, str(ROOT))
 warnings.filterwarnings("ignore")
 
-# ── device / sizes ────────────────────────────────────────────────────────────
-DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
+def _get_device() -> torch.device:
+    if torch.cuda.is_available():
+        return torch.device("cuda")
+    elif torch.backends.mps.is_available():
+        return torch.device("mps")
+    return torch.device("cpu")
+
+
+DEVICE = _get_device()
 INPUT_SIZE = (512, 512)
 HEATMAP_SIZE = (256, 256)
 NUM_KEYPOINTS = 10
@@ -675,7 +683,7 @@ def main():
 
     # ── 1. Load models ────────────────────────────────────────────────────────
     print("\n[1] Loading models ...")
-    DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    DEVICE = _get_device()
     print(f"  Device: {DEVICE}")
 
 # Landmark
