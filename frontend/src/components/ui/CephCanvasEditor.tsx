@@ -41,11 +41,22 @@ export type Lines3Level = {
   apical:   Segment6;
 };
 
+/** Two global-minimum bone gap lines for "Min Distance" mode.
+ *  Origin (x1, y1) is the tooth SURFACE; endpoint (x2, y2) is the bone surface.
+ *  labial_mm / palatal_mm are pre-computed by the backend for accurate labels. */
+export interface GlobalMinLines {
+  labial_line:  number[][];   // [[x_tooth, y_tooth], [x_bone, y_bone]] image-px
+  palatal_line: number[][];
+  labial_mm:    number;
+  palatal_mm:   number;
+}
+
 interface Props {
   imageFile: File;
   initialKeypoints?: Keypoint[];
   initialPolygons?: PolygonShape[];
-  boneThickness?: Lines3Level;   // Plan B — 3-level measurement lines
+  boneThickness?: Lines3Level;    // Standard mode — 3-level measurement lines
+  globalMinLines?: GlobalMinLines; // Min Distance mode — 2 bold bottleneck lines
   onKeypointsChange?: (kps: Keypoint[]) => void;
   onPolygonsChange?: (polys: PolygonShape[]) => void;
 }
@@ -118,8 +129,13 @@ function nearestEdgeInsert(
 // ── Component ─────────────────────────────────────────────────────────────────
 
 export default function CephCanvasEditor({
-  imageFile, initialKeypoints, initialPolygons, boneThickness,
-  onKeypointsChange, onPolygonsChange,
+  imageFile,
+  initialKeypoints,
+  initialPolygons,
+  boneThickness,
+  globalMinLines,
+  onKeypointsChange,
+  onPolygonsChange,
 }: Props) {
   const containerRef  = useRef<HTMLDivElement>(null);
   const stageRef      = useRef<any>(null);
@@ -652,7 +668,7 @@ export default function CephCanvasEditor({
                   );
                 }
 
-                const bt = live ?? mockLines;
+                const bt = live ?? (globalMinLines ? null : mockLines);
                 if (!bt) return null;
 
                 const levels: Array<{
@@ -791,6 +807,89 @@ export default function CephCanvasEditor({
                         shadowColor={color}
                         shadowBlur={6 / stageScale}
                         shadowOpacity={0.9}
+                      />
+                    </Group>
+                  );
+                });
+              })()}
+
+              {/* ── Global Min Distance mode — 2 bold bottleneck lines ───────────────
+                   Rendered ONLY when globalMinLines prop is present.
+                   The standard boneThickness mock is suppressed in this mode
+                   so exactly 2 lines are visible (labial + palatal minimum). */}
+              {showMeasurementLines && globalMinLines && (() => {
+                const LABIAL_COL  = '#fb923c';   // Warm orange  — labial bottleneck
+                const PALATAL_COL = '#a78bfa';   // Violet       — palatal bottleneck
+                const SW  = 2.5 / stageScale;    // Thicker than standard lines for emphasis
+                const dotR = 4.0 / stageScale;
+
+                const toStage = (imgX: number, imgY: number) => {
+                  const [sx, sy] = toContent(imgX, imgY);
+                  if (Number.isNaN(sx) || Number.isNaN(sy)) return null;
+                  return [sx, sy] as [number, number];
+                };
+
+                const lines = [
+                  {
+                    seg: globalMinLines.labial_line,
+                    color: LABIAL_COL,
+                    label: `⚡ L min: ${globalMinLines.labial_mm.toFixed(2)}mm`,
+                    id: 'gmin-labial',
+                  },
+                  {
+                    seg: globalMinLines.palatal_line,
+                    color: PALATAL_COL,
+                    label: `⚡ P min: ${globalMinLines.palatal_mm.toFixed(2)}mm`,
+                    id: 'gmin-palatal',
+                  },
+                ];
+
+                return lines.map(({ seg, color, label, id }) => {
+                  if (!Array.isArray(seg) || seg.length < 2) return null;
+                  const s0 = toStage(seg[0][0], seg[0][1]);
+                  const s1 = toStage(seg[1][0], seg[1][1]);
+                  if (!s0 || !s1) return null;
+                  const [x1, y1] = s0;
+                  const [x2, y2] = s1;
+                  const mx = (x1 + x2) / 2;
+                  const my = (y1 + y2) / 2;
+
+                  return (
+                    <Group key={id} listening={false}>
+                      {/* Main bottleneck line */}
+                      <Line
+                        points={[x1, y1, x2, y2]}
+                        stroke={color}
+                        strokeWidth={SW}
+                        opacity={0.95}
+                      />
+                      {/* Tooth-surface endpoint tick */}
+                      <Line
+                        points={[x1 - dotR, y1, x1 + dotR, y1]}
+                        stroke={color}
+                        strokeWidth={1.5 / stageScale}
+                        opacity={1}
+                      />
+                      {/* Bone-surface endpoint tick */}
+                      <Line
+                        points={[x2 - dotR, y2, x2 + dotR, y2]}
+                        stroke={color}
+                        strokeWidth={1.5 / stageScale}
+                        opacity={1}
+                      />
+                      {/* mm label at midpoint */}
+                      <Text
+                        x={mx + 5 / stageScale}
+                        y={my - 12 / stageScale}
+                        text={label}
+                        fontSize={10 / stageScale}
+                        fontStyle="bold"
+                        fill={color}
+                        shadowColor="black"
+                        shadowBlur={4 / stageScale}
+                        shadowOpacity={0.85}
+                        shadowOffsetX={1 / stageScale}
+                        shadowOffsetY={1 / stageScale}
                       />
                     </Group>
                   );

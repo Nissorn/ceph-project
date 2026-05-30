@@ -592,7 +592,155 @@ def _find_tooth_boundary(tooth_mask: np.ndarray, start_pt: np.ndarray, direction
     return last_inside_pt
 
 
-# ── AnalysisService singleton ────────────────────────────────────────────────
+# ── Global Minimum Distance Algorithm (replaces zonal 6-line version) ─────────
+#
+# BUG AUTOPSY — why the previous version produced lines in the nasal cavity:
+#   The old `calculate_zonal_measurements` cast rays from the LONG-AXIS CENTER
+#   (tip + t*unit). On real cephalograms, this point is inside the tooth body.
+#   When landmarks have even moderate error, the axis drifts — the origin
+#   (x1, y1) can land in the nasal cavity or cortex, producing floating lines.
+#
+# THE FIX — mirror the standard measurement_lines geometry exactly:
+#   1. For each sweep point P on the axis, call _find_tooth_boundary(tooth, P, ±perp)
+#      to find where the perpendicular ray EXITS the tooth mask → tooth SURFACE pt.
+#   2. From that surface pt, call _get_bone_thickness_at_point(bone, surface, ±perp)
+#      → signed pixel distance to nearest bone pixel.
+#   3. Track the global minimum across the full working length.
+#
+# This is identical to how labial_midroot_px is computed in Step 7.5 of
+# analyze_image(), just swept over N=60 points instead of 1.
+
+def calculate_global_minimum(
+    tip: np.ndarray,
+    apex: np.ndarray,
+    u1_unit: np.ndarray,
+    u1_perp: np.ndarray,
+    masks: list,
+    mm_per_pixel: float,
+    n_sweep: int = 60,
+) -> dict:
+    """
+    Global Minimum Distance Algorithm — sweeps the ENTIRE working root length.
+
+    Finds the SINGLE thinnest bone gap on each side (labial / palatal).
+    Origin of each result line is the TOOTH SURFACE (not the long-axis center),
+    so lines are always anchored to visible anatomy.
+
+    Args:
+        tip:          Upper_tip  (x, y) image px — NOT mutated
+        apex:         Upper_apex (x, y) image px — NOT mutated
+        u1_unit:      Unit vector along long axis (tip → apex)   — NOT mutated
+        u1_perp:      Unit vector perpendicular (labial / +x direction) — NOT mutated
+        masks:        [tooth_mask, labial_mask, palatal_mask] corrected binary masks
+        mm_per_pixel: Per-image calibration scalar (from calibration.csv)
+        n_sweep:      Sample count along full working length (default 60)
+
+    Returns:
+        {
+          "labial_line":  [[x_tooth, y_tooth], [x_bone, y_bone]],
+          "palatal_line": [[x_tooth, y_tooth], [x_bone, y_bone]],
+          "labial_mm":    float,   # pre-computed mm for frontend label
+          "palatal_mm":   float,
+        }
+
+    Geometry invariants:
+        - Cervical offset: start of sweep is 1.5 mm from tip (avoids crest noise).
+        - Labial side:  rays cast in  +u1_perp direction.
+        - Palatal side: rays cast in  -u1_perp direction.
+        - Mutation-free: working copies made of all ndarray inputs.
+    """
+    # Immutable working copies — never write back to caller's arrays
+    tip_  = np.array(tip,     dtype=np.float32)
+    apex_ = np.array(apex,    dtype=np.float32)
+    unit_ = np.array(u1_unit, dtype=np.float32)
+    perp_ = np.array(u1_perp, dtype=np.float32)
+
+    tooth_mask   = masks[MASK_IDX_UPPER_INCISOR]
+    labial_mask  = masks[MASK_IDX_LABIAL_BONE]
+    palatal_mask = masks[MASK_IDX_PALATAL_BONE]
+
+    total_len = float(np.linalg.norm(apex_ - tip_))
+    if total_len < 1e-6:
+        fallback = [[float(tip_[0]), float(tip_[1])], [float(tip_[0]), float(tip_[1])]]
+        return {
+            "labial_line":  fallback,
+            "palatal_line": fallback,
+            "labial_mm":    0.0,
+            "palatal_mm":   0.0,
+        }
+
+    # Sweep from 1.5 mm offset (cervical) to apex
+    cervical_offset_px = min(1.5 / mm_per_pixel, total_len * 0.15)
+    t_start = cervical_offset_px
+    t_end   = total_len
+
+    # ── Per-side trackers ──────────────────────────────────────────────────────
+    best_labial_px:  float            = float("inf")
+    best_labial_pt:  Optional[np.ndarray] = None   # tooth surface origin
+    best_labial_end: Optional[np.ndarray] = None   # bone surface endpoint
+
+    best_palatal_px: float            = float("inf")
+    best_palatal_pt: Optional[np.ndarray] = None
+    best_palatal_end: Optional[np.ndarray] = None
+
+    for i in range(n_sweep):
+        frac     = i / max(n_sweep - 1, 1)
+        t_sample = t_start + frac * (t_end - t_start)
+        P_axis   = tip_ + t_sample * unit_        # point on long axis
+
+        # ── Labial side ───────────────────────────────────────────────────────
+        # Step A: march from axis in +perp direction → exit tooth → tooth surface
+        P_lab_tooth = _find_tooth_boundary(tooth_mask, P_axis, perp_, max_dist_px=120.0)
+        # Step B: from tooth surface → find labial bone gap
+        lab_px = _get_bone_thickness_at_point(
+            labial_mask, P_lab_tooth, perp_, max_dist_px=150.0
+        )
+        if lab_px > 0.0 and lab_px < best_labial_px:
+            best_labial_px  = lab_px
+            best_labial_pt  = P_lab_tooth.copy()
+            best_labial_end = P_lab_tooth + lab_px * perp_
+
+        # ── Palatal side ──────────────────────────────────────────────────────
+        P_pal_tooth = _find_tooth_boundary(tooth_mask, P_axis, -perp_, max_dist_px=120.0)
+        pal_px = _get_bone_thickness_at_point(
+            palatal_mask, P_pal_tooth, -perp_, max_dist_px=150.0
+        )
+        if pal_px > 0.0 and pal_px < best_palatal_px:
+            best_palatal_px  = pal_px
+            best_palatal_pt  = P_pal_tooth.copy()
+            best_palatal_end = P_pal_tooth - pal_px * perp_
+
+    # ── Convert to [[x1,y1],[x2,y2]] format ──────────────────────────────────
+    def _fmt(p1: np.ndarray, p2: np.ndarray) -> list:
+        return [
+            [float(round(float(p1[0]), 3)), float(round(float(p1[1]), 3))],
+            [float(round(float(p2[0]), 3)), float(round(float(p2[1]), 3))],
+        ]
+
+    # Fallback: use axis midpoint if no valid ray found (degenerate mask)
+    mid = tip_ + (t_start + t_end) / 2.0 * unit_
+
+    if best_labial_pt is not None:
+        labial_line = _fmt(best_labial_pt, best_labial_end)
+        labial_mm   = float(round(best_labial_px * mm_per_pixel, 3))
+    else:
+        labial_line = _fmt(mid, mid)
+        labial_mm   = 0.0
+
+    if best_palatal_pt is not None:
+        palatal_line = _fmt(best_palatal_pt, best_palatal_end)
+        palatal_mm   = float(round(best_palatal_px * mm_per_pixel, 3))
+    else:
+        palatal_line = _fmt(mid, mid)
+        palatal_mm   = 0.0
+
+    return {
+        "labial_line":  labial_line,
+        "palatal_line": palatal_line,
+        "labial_mm":    labial_mm,
+        "palatal_mm":   palatal_mm,
+    }
+
 
 class AnalysisService:
     """
@@ -943,6 +1091,20 @@ class AnalysisService:
             "palatal_apex_line": _to_line_coords(apex, palatal_apex_target),
         }
 
+        # ── Step 7.55: Global Minimum Distance Sweep ──────────────────────────────
+        # Sweeps 60 perpendicular rays across the FULL working root length.
+        # CRITICAL FIX: origin of each line is the TOOTH SURFACE (via
+        # _find_tooth_boundary), not the long-axis center — eliminating the
+        # "lines in nasal cavity" regression. Returns 2 lines + pre-computed mm.
+        global_min_lines = calculate_global_minimum(
+            tip=raw_coords_orig[0],
+            apex=raw_coords_orig[1],
+            u1_unit=u1_unit,
+            u1_perp=u1_perp,
+            masks=corrected_masks,
+            mm_per_pixel=mm_per_pixel,
+        )
+
         # ── Step 7.6: Alveolar Bone Thickness Classification (Zhang et al. 2021) ──
         # Define "Thin" as strictly < 0.5 mm and "Thick" as >= 0.5 mm to avoid edge-case None classifications
         labial_thin = [labial_crest_mm < 0.5, labial_midroot_mm < 0.5, labial_apex_mm < 0.5]
@@ -1085,6 +1247,7 @@ class AnalysisService:
             "snapping": snapping_diag,
             "mask_overlap_diagnostic": mask_diag,
             "measurement_lines": measurement_lines,
+            "global_min_lines": global_min_lines,
             "metrics": {
                 "u1_pp_angle_deg": float(u1_pp_angle_deg),
                 "labial_crest_mm": float(round(labial_crest_mm, 3)),
@@ -1107,13 +1270,14 @@ class AnalysisService:
                 "biomechanics_to_avoid": b_matrix["Biomechanics to avoid"],
                 "clinical_implication": b_matrix["Clinical implication"],
             },
-            # scale factors exposed for frontend verification
+            # scale factors + calibration exposed for frontend verification
             "_debug": {
                 "orig_width": int(orig_w),
                 "orig_height": int(orig_h),
                 "scale_x": float(round(scale_x, 6)),
                 "scale_y": float(round(scale_y, 6)),
                 "device": str(self._device),
+                "mm_per_pixel": float(mm_per_pixel),
             },
         }
         return result

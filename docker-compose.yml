@@ -21,6 +21,7 @@ services:
       PYTHONPATH: /app:/app/backend  # 🌟 บังคับชี้ทิศทางให้โค้ดหาโมดูล 'src' เจอ 100%
     volumes:
       - ./outputs/checkpoints:/app/model-weights/checkpoints:ro
+      - ./backend/models:/app/models:ro  # 🌟 segmentation checkpoints (tversky_deepLabV3plus_...)
       - ./src:/app/src  # 🌟 เมาท์โฟลเดอร์ src ล่าสุดของคุณเข้าไปในตู้
       - ./backend/app:/app/backend/app
       - ./config.yaml:/app/config.yaml

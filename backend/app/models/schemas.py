@@ -90,6 +90,19 @@ class MeasurementLines(BaseModel):
     palatal_apex_line: List[List[float]]
 
 
+class GlobalMinLines(BaseModel):
+    """Two global-minimum bone distance lines from the full-sweep algorithm.
+
+    Each line: [[x_tooth, y_tooth], [x_bone, y_bone]] in image-space pixels.
+    Origin (x_tooth, y_tooth) is the tooth SURFACE — never the axis center.
+    Pre-computed mm values are included so the frontend avoids redundant math.
+    """
+    labial_line:  List[List[float]]   # [[x_tooth, y_tooth], [x_bone, y_bone]]
+    palatal_line: List[List[float]]
+    labial_mm:    float               # Euclidean pixel dist × mm_per_pixel
+    palatal_mm:   float
+
+
 class DebugInfo(BaseModel):
     orig_width: int
     orig_height: int
@@ -113,6 +126,7 @@ class AnalysisResultData(BaseModel):
     mask_overlap_diagnostic: Optional[MaskOverlapDiagnostic] = None
     metrics: Metrics
     measurement_lines: Optional[MeasurementLines] = None
+    global_min_lines: Optional[GlobalMinLines] = None    # NEW: 2-line global minimum sweep
     _debug: Optional[DebugInfo] = None
 
 

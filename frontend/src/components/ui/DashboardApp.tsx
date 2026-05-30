@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import UploadZone from './UploadZone';
 import MetricCard from './MetricCard';
-import CephCanvasEditor from './CephCanvasEditor';
+import CephCanvasEditor, { type Lines3Level, type GlobalMinLines } from './CephCanvasEditor';
 
 const DistanceItem = ({ label, value }: { label: string; value: number }) => {
   let statusColor = 'text-emerald-500 dark:text-emerald-400';
@@ -53,12 +53,85 @@ const getShortBoneTypeLabel = (type: string) => {
   return 'Unknown';
 };
 
+/**
+ * Adapts the backend's flat measurement_lines dict to the Lines3Level schema
+ * the CephCanvasEditor canvas expects for the Plan B 3-level dashed rulers.
+ *
+ * Backend schema (6 keys, each [[x1,y1],[x2,y2]]):
+ *   labial_crest_line, labial_midroot_line, labial_apex_line,
+ *   palatal_crest_line, palatal_midroot_line, palatal_apex_line
+ *
+ * Canvas schema (Lines3Level):
+ *   cervical, middle, apical  →  each a Segment6 with palatal + labial endpoints
+ *
+ * Mapping: cervical=crest, middle=midroot, apical=apex
+ */
+function adaptMeasurementLinesToBoneThickness(ml: any, metrics?: any): Lines3Level | undefined {
+  if (!ml) return undefined;
+  try {
+    const pick = (key: string) => {
+      const seg: number[][] = ml[key];
+      if (!Array.isArray(seg) || seg.length < 2) return null;
+      return { x1: seg[0][0], y1: seg[0][1], x2: seg[1][0], y2: seg[1][1] };
+    };
+
+    const lCrest   = pick('labial_crest_line');
+    const lMid     = pick('labial_midroot_line');
+    const lApex    = pick('labial_apex_line');
+    const pCrest   = pick('palatal_crest_line');
+    const pMid     = pick('palatal_midroot_line');
+    const pApex    = pick('palatal_apex_line');
+
+    if (!lCrest || !lMid || !lApex || !pCrest || !pMid || !pApex) return undefined;
+
+    // Pull mm distances from the metrics block for accurate ruler labels.
+    const lc = Number(metrics?.labial_crest_mm  ?? 0);
+    const lm = Number(metrics?.labial_midroot_mm ?? 0);
+    const la = Number(metrics?.labial_apex_mm    ?? 0);
+    const pc = Number(metrics?.palatal_crest_mm  ?? 0);
+    const pm = Number(metrics?.palatal_midroot_mm ?? 0);
+    const pa = Number(metrics?.palatal_apex_mm   ?? 0);
+
+    const makeSegment6 = (
+      l: { x1: number; y1: number; x2: number; y2: number },
+      p: { x1: number; y1: number; x2: number; y2: number },
+      lDistMm: number,
+      pDistMm: number,
+    ) => ({
+      // Labial: landmark → tooth surface  (line start → end)
+      labial_distance_mm: lDistMm,
+      labial_tooth_x: l.x1,  labial_tooth_y: l.y1,
+      labial_bone_x:  l.x2,  labial_bone_y:  l.y2,
+      // Palatal: landmark → tooth surface
+      palatal_distance_mm: pDistMm,
+      palatal_tooth_x: p.x1, palatal_tooth_y: p.y1,
+      palatal_bone_x:  p.x2, palatal_bone_y:  p.y2,
+    });
+
+    return {
+      cervical: makeSegment6(lCrest, pCrest, lc, pc),
+      middle:   makeSegment6(lMid,   pMid,   lm, pm),
+      apical:   makeSegment6(lApex,  pApex,  la, pa),
+    };
+  } catch {
+    console.warn('[DashboardApp] adaptMeasurementLinesToBoneThickness: parse error', ml);
+    return undefined;
+  }
+}
+
+// NOTE: adaptZonalMeasurementLines removed — replaced by GlobalMinLines direct pass-through.
+// The backend now pre-computes mm values (labial_mm, palatal_mm) and the frontend
+// passes global_min_lines directly to the CephCanvasEditor globalMinLines prop.
+// No client-side pixel→mm math needed; no hardcoded calibration possible.
+
 export default function DashboardApp() {
   const [file, setFile] = useState<File | null>(null);
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(false);
   const [results, setResults] = useState<any>(null);
   const [error, setError] = useState<string | null>(null);
+  // Measurement mode: 'standard' = existing 3-line method | 'zonal' = Zonal Min Distance
+  const [measurementMode, setMeasurementMode] = useState<'standard' | 'zonal'>('standard');
 
   // Optimized Object URL lifecycle management to prevent browser memory leaks
   useEffect(() => {
@@ -79,12 +152,14 @@ export default function DashboardApp() {
     setFile(selectedFile);
     setResults(null);
     setError(null);
+    setMeasurementMode('standard');  // reset mode on new image
   }, []);
 
   const handleReset = useCallback(() => {
     setFile(null);
     setResults(null);
     setError(null);
+    setMeasurementMode('standard');  // reset mode on clear
   }, []);
 
   const handleAnalyze = useCallback(async () => {
@@ -100,9 +175,7 @@ export default function DashboardApp() {
       const formData = new FormData();
       formData.append('file', file);
        
-      // Resilient base URL derivation supporting distinct environments
-      const baseUrl = (import.meta.env && import.meta.env.VITE_API_URL) || 'http://localhost:8000';
-      const response = await fetch(`${baseUrl}/api/v1/analyze`, {
+      const response = await fetch('http://localhost:8123/api/v1/analyze', {
         method: 'POST',
         body: formData,
         signal: controller.signal,
@@ -205,6 +278,14 @@ export default function DashboardApp() {
       const biomechanics_to_avoid = payload.metrics?.biomechanics_to_avoid ?? '';
       const clinical_implication = payload.metrics?.clinical_implication ?? '';
 
+      // CRITICAL: extract mm_per_pixel from _debug for zonal distance computation.
+      // Per design rule: NEVER hardcode or guess the calibration value.
+      // The backend now exposes it in payload._debug.mm_per_pixel.
+      const mmPerPixel = Number(payload._debug?.mm_per_pixel ?? 0);
+      if (!mmPerPixel || mmPerPixel <= 0) {
+        console.warn('[DashboardApp] mm_per_pixel missing or zero in _debug — zonal mm labels will fallback to 0');
+      }
+
       const normalizedResults = {
         u1_pp_angle,
         u1_pp_status,
@@ -230,10 +311,13 @@ export default function DashboardApp() {
         clinical_implication,
         metrics: payload.metrics || null,
         measurement_lines: payload.measurement_lines || null,
+        global_min_lines: (payload.global_min_lines as GlobalMinLines) || null,  // 2-line global min sweep
+        mm_per_pixel: mmPerPixel,                                            // NEW: dynamic calibration
         annotations: { keypoints: apiKeypoints, polygons: apiPolygons },
       };
 
       setResults(normalizedResults);
+      setMeasurementMode('standard');  // always start on standard after a fresh analysis
     } catch (err: any) {
       console.error("Analysis failed:", err);
       if (err.name === 'AbortError') {
@@ -276,8 +360,16 @@ export default function DashboardApp() {
                      imageFile={file}
                      initialKeypoints={results.annotations?.keypoints}
                      initialPolygons={results.annotations?.polygons}
-                     measurementLines={results.measurement_lines}
-                     metricsData={results.metrics}
+                     boneThickness={
+                       measurementMode === 'standard'
+                         ? adaptMeasurementLinesToBoneThickness(results.measurement_lines, results.metrics)
+                         : undefined  // suppress 3-line rulers in Min Distance mode
+                     }
+                     globalMinLines={
+                       measurementMode === 'zonal'
+                         ? (results.global_min_lines ?? undefined)
+                         : undefined
+                     }
                    />
                  </div>
                ) : previewUrl ? (
@@ -386,33 +478,129 @@ export default function DashboardApp() {
 
               {/* Distance Matrix Card */}
               <div className="bg-white dark:bg-slate-800/90 border border-slate-200 dark:border-slate-700/60 rounded-xl p-5 flex flex-col gap-4 relative overflow-hidden transition-all duration-300">
+
+                {/* ── Measurement Mode Toggle (Segmented Control) ─────────────────── */}
+                <div
+                  id="measurement-mode-toggle"
+                  className="flex rounded-lg overflow-hidden border border-slate-200 dark:border-slate-700/60 bg-slate-100 dark:bg-slate-900/40 p-0.5 gap-0.5"
+                  role="group"
+                  aria-label="Measurement mode"
+                >
+                  <button
+                    id="toggle-standard"
+                    onClick={() => setMeasurementMode('standard')}
+                    className={`flex-1 py-1.5 px-2 rounded-md text-[10px] font-bold uppercase tracking-wider transition-all duration-150 focus:outline-none ${
+                      measurementMode === 'standard'
+                        ? 'bg-white dark:bg-slate-700 text-slate-800 dark:text-white shadow-sm'
+                        : 'text-slate-400 dark:text-slate-500 hover:text-slate-600 dark:hover:text-slate-300'
+                    }`}
+                    title="Standard 3-line measurement method"
+                  >
+                    Standard Lines
+                  </button>
+                  <button
+                    id="toggle-zonal"
+                    onClick={() => setMeasurementMode('zonal')}
+                    disabled={!results?.global_min_lines}
+                    className={`flex-1 py-1.5 px-2 rounded-md text-[10px] font-bold uppercase tracking-wider transition-all duration-150 focus:outline-none disabled:opacity-30 disabled:cursor-not-allowed ${
+                      measurementMode === 'zonal'
+                        ? 'bg-indigo-600 text-white shadow-sm'
+                        : 'text-slate-400 dark:text-slate-500 hover:text-slate-600 dark:hover:text-slate-300'
+                    }`}
+                    title="Zonal minimum-distance sweep method"
+                  >
+                    ⚡ Zonal Min
+                  </button>
+                </div>
+
                 <h4 className="text-xs font-semibold uppercase text-slate-500 dark:text-slate-400 tracking-wider flex items-center gap-2 border-b border-slate-200 dark:border-slate-700/60 pb-2">
                   <svg className="w-4 h-4 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6h16M4 12h16m-7 6h7" />
                   </svg>
                   Root-to-Bone Distances
+                  {measurementMode === 'zonal' && (
+                    <span className="ml-auto text-[9px] font-semibold text-indigo-500 dark:text-indigo-400 bg-indigo-500/10 border border-indigo-500/20 px-1.5 py-0.5 rounded-full uppercase tracking-wide">
+                      Zonal Min
+                    </span>
+                  )}
                 </h4>
-                <div className="grid grid-cols-2 gap-4">
-                  {/* Labial Column */}
-                  <div className="flex flex-col gap-3">
-                    <div className="text-center text-[10px] font-bold text-slate-400 dark:text-slate-500 border-b border-slate-200 dark:border-slate-700/60 pb-1.5 uppercase tracking-wide">
-                      Labial Plate
-                    </div>
-                    <DistanceItem label="Crest" value={results.labial_crest} severity={results.labial_crest_severity} />
-                    <DistanceItem label="Midroot" value={results.labial_midroot} severity={results.labial_midroot_severity} />
-                    <DistanceItem label="Apex (LB)" value={results.labial_apex} severity={results.labial_apex_severity} />
-                  </div>
 
-                  {/* Palatal Column */}
+                {/* Distance grid — switches between Standard (6 slots) and Min Distance (2 bottleneck cards) */}
+                {measurementMode === 'zonal' && results?.global_min_lines ? (
+                  // ── Min Distance mode: 2 bold bottleneck cards ──────────────────
                   <div className="flex flex-col gap-3">
-                    <div className="text-center text-[10px] font-bold text-slate-400 dark:text-slate-500 border-b border-slate-200 dark:border-slate-700/60 pb-1.5 uppercase tracking-wide">
-                      Palatal Plate
-                    </div>
-                    <DistanceItem label="Crest" value={results.palatal_crest} severity={results.palatal_crest_severity} />
-                    <DistanceItem label="Midroot" value={results.palatal_midroot} severity={results.palatal_midroot_severity} />
-                    <DistanceItem label="Apex (PB)" value={results.palatal_apex} severity={results.palatal_apex_severity} />
+                    {/* Labial Bottleneck */}
+                    {(() => {
+                      const mm = results.global_min_lines.labial_mm as number;
+                      const sev = mm < 0.5 ? 'critical' : mm < 1.0 ? 'warning' : 'normal';
+                      const clr = sev === 'critical' ? 'border-red-500/40 bg-red-500/5 dark:bg-red-500/10'
+                        : sev === 'warning' ? 'border-amber-500/40 bg-amber-500/5 dark:bg-amber-500/10'
+                        : 'border-orange-400/30 bg-orange-400/5 dark:bg-orange-400/10';
+                      const valClr = sev === 'critical' ? 'text-red-500' : sev === 'warning' ? 'text-amber-500' : 'text-orange-400';
+                      return (
+                        <div className={`p-4 rounded-xl border ${clr} flex flex-col gap-1`}>
+                          <div className="text-[10px] font-bold uppercase tracking-wider text-slate-400 dark:text-slate-500">
+                            ⚡ Labial Bottleneck
+                          </div>
+                          <div className={`text-2xl font-bold ${valClr} flex items-end gap-1`}>
+                            {mm.toFixed(2)}
+                            <span className="text-sm font-semibold text-slate-400 dark:text-slate-500 mb-0.5">mm</span>
+                          </div>
+                          <div className="text-[9px] text-slate-400 dark:text-slate-500 uppercase tracking-wide">
+                            {sev === 'critical' ? '🔴 Critical — Insufficient labial bone' : sev === 'warning' ? '🟡 Warning — Thin labial bone' : '🟢 Monitor — Adequate'}
+                          </div>
+                        </div>
+                      );
+                    })()}
+
+                    {/* Palatal Bottleneck */}
+                    {(() => {
+                      const mm = results.global_min_lines.palatal_mm as number;
+                      const sev = mm < 0.5 ? 'critical' : mm < 1.0 ? 'warning' : 'normal';
+                      const clr = sev === 'critical' ? 'border-red-500/40 bg-red-500/5 dark:bg-red-500/10'
+                        : sev === 'warning' ? 'border-amber-500/40 bg-amber-500/5 dark:bg-amber-500/10'
+                        : 'border-violet-400/30 bg-violet-400/5 dark:bg-violet-400/10';
+                      const valClr = sev === 'critical' ? 'text-red-500' : sev === 'warning' ? 'text-amber-500' : 'text-violet-400';
+                      return (
+                        <div className={`p-4 rounded-xl border ${clr} flex flex-col gap-1`}>
+                          <div className="text-[10px] font-bold uppercase tracking-wider text-slate-400 dark:text-slate-500">
+                            ⚡ Palatal Bottleneck
+                          </div>
+                          <div className={`text-2xl font-bold ${valClr} flex items-end gap-1`}>
+                            {mm.toFixed(2)}
+                            <span className="text-sm font-semibold text-slate-400 dark:text-slate-500 mb-0.5">mm</span>
+                          </div>
+                          <div className="text-[9px] text-slate-400 dark:text-slate-500 uppercase tracking-wide">
+                            {sev === 'critical' ? '🔴 Critical — Insufficient palatal bone' : sev === 'warning' ? '🟡 Warning — Thin palatal bone' : '🟢 Monitor — Adequate'}
+                          </div>
+                        </div>
+                      );
+                    })()}
                   </div>
-                </div>
+                ) : (
+                  // ── Standard mode: 6-slot grid ──────────────────────────────────
+                  <div className="grid grid-cols-2 gap-4">
+                    {/* Labial Column */}
+                    <div className="flex flex-col gap-3">
+                      <div className="text-center text-[10px] font-bold text-slate-400 dark:text-slate-500 border-b border-slate-200 dark:border-slate-700/60 pb-1.5 uppercase tracking-wide">
+                        Labial Plate
+                      </div>
+                      <DistanceItem label="Crest" value={results.labial_crest} severity={results.labial_crest_severity} />
+                      <DistanceItem label="Midroot" value={results.labial_midroot} severity={results.labial_midroot_severity} />
+                      <DistanceItem label="Apex (LB)" value={results.labial_apex} severity={results.labial_apex_severity} />
+                    </div>
+
+                    {/* Palatal Column */}
+                    <div className="flex flex-col gap-3">
+                      <div className="text-center text-[10px] font-bold text-slate-400 dark:text-slate-500 border-b border-slate-200 dark:border-slate-700/60 pb-1.5 uppercase tracking-wide">
+                        Palatal Plate
+                      </div>
+                      <DistanceItem label="Crest" value={results.palatal_crest} severity={results.palatal_crest_severity} />
+                      <DistanceItem label="Midroot" value={results.palatal_midroot} severity={results.palatal_midroot_severity} />
+                      <DistanceItem label="Apex (PB)" value={results.palatal_apex} severity={results.palatal_apex_severity} />
+                    </div>
+                  </div>
+                )}
               </div>
 
               {/* Biomechanics and Clinical Recommendations Card */}

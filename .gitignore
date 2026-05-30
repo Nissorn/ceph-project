@@ -82,3 +82,9 @@ scratchpad/
 !data/raw/images/.gitkeep
 !data/raw/annotations/.gitkeep
 !data/processed/.gitkeep
+
+# ============================================================
+# Local Agent State
+# ============================================================
+.hermes/
+

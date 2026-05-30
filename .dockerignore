@@ -1,0 +1,35 @@
+# ── .dockerignore — Cephalometric project root ────────────────────────────────
+# Build context is the repo root (docker-compose context: .)
+# Exclude large runtime-mounted directories to:
+#   1. Keep image layers small (no data or weights baked in)
+#   2. Eliminate the ~47s chown -R step over gigabytes of mounted data
+#   3. Prevent accidental data-in-image (per GEMINI.md guardrail #4)
+
+# ── Data files (mounted at runtime via docker-compose volumes) ─────────────────
+data/
+outputs/
+models/
+
+# ── Dev artefacts ──────────────────────────────────────────────────────────────
+.git/
+.gitignore
+**/__pycache__/
+**/*.pyc
+**/*.pyo
+**/*.pyd
+**/.pytest_cache/
+**/.mypy_cache/
+**/.ruff_cache/
+
+# ── Frontend build output (not needed by API) ──────────────────────────────────
+frontend/node_modules/
+frontend/dist/
+frontend/.astro/
+
+# ── Notebooks / scratchpad ────────────────────────────────────────────────────
+scratchpad/
+**/*.ipynb
+
+# ── OS artefacts ──────────────────────────────────────────────────────────────
+.DS_Store
+**/.DS_Store
