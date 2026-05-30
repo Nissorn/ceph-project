@@ -12,7 +12,6 @@ export default function UploadZone({ onFileSelect }: UploadZoneProps) {
   const validateAndProcessFile = (file: File) => {
     setError(null);
 
-    // Validate file extension / MIME type
     const validExtensions = ['.png', '.jpg', '.jpeg', '.dcm', '.dicom'];
     const fileName = file.name.toLowerCase();
     const hasValidExtension = validExtensions.some(ext => fileName.endsWith(ext));
@@ -23,7 +22,6 @@ export default function UploadZone({ onFileSelect }: UploadZoneProps) {
       return;
     }
 
-    // Validate file size (maximum 50MB for high-resolution medical scans)
     const maxSize = 50 * 1024 * 1024;
     if (file.size > maxSize) {
       setError(`File size exceeds 50MB limit (${(file.size / (1024 * 1024)).toFixed(1)}MB).`);
@@ -54,7 +52,6 @@ export default function UploadZone({ onFileSelect }: UploadZoneProps) {
   const handleDragLeave = (e: React.DragEvent<HTMLDivElement>) => {
     e.preventDefault();
     e.stopPropagation();
-    // Only reset dragging state if leaving the main container
     if (e.currentTarget.contains(e.relatedTarget as Node)) return;
     setIsDragging(false);
   };
@@ -73,7 +70,7 @@ export default function UploadZone({ onFileSelect }: UploadZoneProps) {
     <div
       className={`flex flex-col items-center justify-center w-full h-full min-h-[500px] border-2 border-dashed rounded-2xl p-12 text-center cursor-pointer transition-all duration-300 overflow-hidden relative group ${
         isDragging
-          ? 'border-singapodent-accent bg-singapodent-accent/5 scale-[0.99] shadow-inner'
+          ? 'border-singapodent-accent bg-singapodent-accent/5 scale-[0.99]'
           : 'border-slate-200 bg-slate-50 hover:bg-slate-100/80 hover:border-slate-300'
       }`}
       onClick={() => fileInputRef.current?.click()}
@@ -82,13 +79,9 @@ export default function UploadZone({ onFileSelect }: UploadZoneProps) {
       onDragLeave={handleDragLeave}
       onDrop={handleDrop}
     >
-      {/* Premium Visual Glow/Gradient Background */}
-      <div className="absolute inset-0 bg-gradient-to-b from-transparent via-transparent to-slate-100/30 pointer-events-none" />
-
-      {/* Elegant Error Banner */}
       {error && (
-        <div 
-          className="absolute top-6 left-6 right-6 z-20 flex items-center justify-between bg-red-50/95 border border-red-200 text-red-600 px-4 py-3 rounded-xl shadow-sm backdrop-blur-sm transition-all duration-200 text-sm text-left"
+        <div
+          className="absolute top-6 left-6 right-6 z-20 flex items-center justify-between bg-red-50 border border-red-200 text-red-600 px-4 py-3 rounded-xl shadow-sm text-sm text-left"
           onClick={(e) => e.stopPropagation()}
         >
           <div className="flex items-center gap-3">
@@ -97,9 +90,9 @@ export default function UploadZone({ onFileSelect }: UploadZoneProps) {
             </svg>
             <span className="font-medium">{error}</span>
           </div>
-          <button 
+          <button
             onClick={() => setError(null)}
-            className="p-1.5 hover:bg-red-100 rounded-lg transition-colors"
+            className="p-1.5 hover:bg-red-100 rounded-lg transition-colors focus:outline-none focus:ring-2 focus:ring-red-400"
             title="Dismiss error"
           >
             <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -109,17 +102,17 @@ export default function UploadZone({ onFileSelect }: UploadZoneProps) {
         </div>
       )}
 
-      <input 
-        type="file" 
-        className="hidden" 
-        ref={fileInputRef} 
-        onChange={handleFileChange} 
-        accept="image/png, image/jpeg, .dcm, .dicom" 
+      <input
+        type="file"
+        className="hidden"
+        ref={fileInputRef}
+        onChange={handleFileChange}
+        accept="image/png, image/jpeg, .dcm, .dicom"
       />
 
       <div className={`bg-white border w-16 h-16 flex items-center justify-center rounded-xl mb-6 transition-all duration-300 ease-out z-10 shadow-sm ${
-        isDragging 
-          ? 'border-singapodent-accent text-singapodent-accent scale-110 shadow-md' 
+        isDragging
+          ? 'border-singapodent-accent text-singapodent-accent scale-110 shadow-md'
           : 'border-slate-100 text-singapodent-primary group-hover:scale-105'
       }`}>
         <svg className="w-8 h-8" fill="none" stroke="currentColor" viewBox="0 0 24 24">

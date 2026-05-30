@@ -3,13 +3,13 @@ import UploadZone from './UploadZone';
 import MetricCard from './MetricCard';
 import CephCanvasEditor, { type Lines3Level, type GlobalMinLines } from './CephCanvasEditor';
 
-const DistanceItem = ({ label, value }: { label: string; value: number }) => {
+const DistanceItem = ({ label, value, severity }: { label: string; value: number; severity?: string }) => {
   let statusColor = 'text-emerald-500 dark:text-emerald-400';
   let badgeColor = 'bg-emerald-500/10 border-emerald-500/20 dark:bg-emerald-950/20';
   let warningIcon = null;
   let desc = 'Safe';
 
-  if (value < 0.5) {
+  if (severity === 'Critical' || value < 0.5) {
     statusColor = 'text-rose-500 dark:text-rose-400';
     badgeColor = 'bg-rose-500/10 border-rose-500/20 dark:bg-rose-950/20 animate-pulse';
     warningIcon = <span className="text-xs shrink-0" title="Critical Warning: Thin bone">⚠️</span>;
@@ -305,7 +305,7 @@ export default function DashboardApp() {
     } catch (err: any) {
       console.error("Analysis failed:", err);
       if (err.name === 'AbortError') {
-        setError('Analysis request timed out after 35 seconds. Verify inference engine availability.');
+        setError('Analysis request timed out after 120 seconds. Verify inference engine availability.');
       } else {
         setError(err.message || 'Failed to connect to the backend analysis service.');
       }
@@ -338,8 +338,9 @@ export default function DashboardApp() {
               {/* Remove button */}
               <button
                 onClick={handleReset}
-                className="absolute top-3 right-3 z-20 bg-black/40 hover:bg-red-500/80 text-white p-2 rounded-full transition duration-150"
+                className="absolute top-3 right-3 z-20 bg-black/40 hover:bg-red-500/80 text-white p-2 rounded-full transition duration-150 focus:outline-none focus:ring-2 focus:ring-white/50"
                 title="Remove Image"
+                aria-label="Remove image"
               >
                 <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" /></svg>
               </button>
@@ -402,7 +403,7 @@ export default function DashboardApp() {
       </div>
 
       {/* Right Panel - Metrics */}
-      <div className="w-96 md:w-[450px] overflow-y-auto p-4 pb-28 border-l border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 shrink-0 custom-scrollbar">
+      <div className="w-full md:w-[450px] overflow-y-auto p-4 pb-28 border-l border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 shrink-0 custom-scrollbar">
         <div className="flex flex-col gap-6 pt-2">
           <div className="pl-2 flex items-center justify-between">
             <h2 className="text-xl font-light tracking-tight text-slate-800 dark:text-white">Clinical Assessment</h2>
@@ -469,7 +470,9 @@ export default function DashboardApp() {
                   <button
                     id="toggle-standard"
                     onClick={() => setMeasurementMode('standard')}
-                    className={`flex-1 py-1.5 px-2 rounded-md text-[10px] font-bold uppercase tracking-wider transition-all duration-150 focus:outline-none ${measurementMode === 'standard'
+                    aria-selected={measurementMode === 'standard'}
+                    role="tab"
+                    className={`flex-1 py-1.5 px-2 rounded-md text-[10px] font-bold uppercase tracking-wider transition-all duration-150 focus:outline-none focus:ring-2 focus:ring-singapodent-accent focus:ring-offset-1 ${measurementMode === 'standard'
                         ? 'bg-white dark:bg-slate-700 text-slate-800 dark:text-white shadow-sm'
                         : 'text-slate-400 dark:text-slate-500 hover:text-slate-600 dark:hover:text-slate-300'
                       }`}
@@ -481,7 +484,9 @@ export default function DashboardApp() {
                     id="toggle-zonal"
                     onClick={() => setMeasurementMode('zonal')}
                     disabled={!results?.global_min_lines}
-                    className={`flex-1 py-1.5 px-2 rounded-md text-[10px] font-bold uppercase tracking-wider transition-all duration-150 focus:outline-none disabled:opacity-30 disabled:cursor-not-allowed ${measurementMode === 'zonal'
+                    aria-selected={measurementMode === 'zonal'}
+                    role="tab"
+                    className={`flex-1 py-1.5 px-2 rounded-md text-[10px] font-bold uppercase tracking-wider transition-all duration-150 focus:outline-none focus:ring-2 focus:ring-singapodent-accent focus:ring-offset-1 disabled:opacity-30 disabled:cursor-not-allowed ${measurementMode === 'zonal'
                         ? 'bg-indigo-600 text-white shadow-sm'
                         : 'text-slate-400 dark:text-slate-500 hover:text-slate-600 dark:hover:text-slate-300'
                       }`}

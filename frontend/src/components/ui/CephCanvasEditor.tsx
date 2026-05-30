@@ -950,7 +950,7 @@ export default function CephCanvasEditor({
         {/* ── Adapted Multi-Line Responsive Glass Pill Toolbar ──────────────── */}
         {img && (
           isToolbarOpen ? (
-            <div className="absolute bottom-4 left-1/2 -translate-x-1/2 flex flex-col items-center gap-1.5 w-[95%] md:w-auto max-w-4xl z-50 animate-fade-in pointer-events-none">
+            <div className="absolute bottom-4 left-1/2 -translate-x-1/2 flex flex-col items-center gap-1.5 w-[95%] md:w-full z-50 animate-fade-in pointer-events-none">
 
               {/* Instructions helper row */}
               <div className="hidden sm:flex items-center gap-1.5 text-[11px] text-slate-200 bg-black/60 px-3 py-1 rounded-full backdrop-blur-sm border border-white/10 pointer-events-auto select-none font-medium">
