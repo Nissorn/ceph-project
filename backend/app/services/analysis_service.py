@@ -670,10 +670,13 @@ def calculate_global_minimum(
             "palatal_mm":   0.0,
         }
 
-    # Sweep from custom offset (cervical) to apex
+    # Sweep from custom offset (cervical) to 66% of root length (ignore apex)
     cervical_offset_px = min(cervical_offset_mm / mm_per_pixel, total_len * 0.15)
     t_start = cervical_offset_px
-    t_end   = total_len
+    t_end   = total_len * 0.66
+
+    if t_start >= t_end:
+        t_start = t_end
 
     # ── Per-side trackers ──────────────────────────────────────────────────────
     best_labial_px:  float            = float("inf")
