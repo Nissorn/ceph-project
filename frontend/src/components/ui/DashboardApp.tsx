@@ -165,6 +165,104 @@ export default function DashboardApp() {
     setCervicalOffsetMm(1.5);        // reset offset
   }, []);
 
+  const processAndSetResults = useCallback((payload: any) => {
+    // Clinical label order: Upper_tip, Upper_apex, Labial_midroot, Labial_crest,
+    // Palatal_midroot, Palatal_crest, ANS, PNS, LB, PB
+    const KP_NAMES = [
+      'Upper_tip', 'Upper_apex', 'Labial_midroot', 'Labial_crest',
+      'Palatal_midroot', 'Palatal_crest', 'ANS', 'PNS', 'LB', 'PB',
+    ];
+    // Backend returns segmentation as keyed dict; matches CephCanvasEditor POLY_PALETTE order
+    const SEG_NAMES = ['Upper_incisor', 'Labial_bone', 'Palatal_bone'] as const;
+    const SEG_PALETTE = [
+      { fill: 'rgba(6, 182, 212, 0.15)', stroke: 'rgba(6, 182, 212, 0.9)' },
+      { fill: 'rgba(236, 72, 153, 0.15)', stroke: 'rgba(236, 72, 153, 0.9)' },
+      { fill: 'rgba(16, 185, 129, 0.15)', stroke: 'rgba(16, 185, 129, 0.9)' },
+    ];
+
+    const apiKeypoints = Array.isArray(payload.landmarks)
+      ? payload.landmarks.map((kp: any, i: number) => ({
+        id: `kp-${i}`,
+        name: KP_NAMES[i] ?? kp?.name ?? `kp-${i}`,
+        x: Number(kp?.x ?? 0),
+        y: Number(kp?.y ?? 0),
+      }))
+      : undefined;
+
+    // Backend polygon: [[x,y],...] → CephCanvasEditor needs flat [x,y,x,y,...]
+    const apiPolygons = payload.segmentation
+      ? SEG_NAMES.map((name, i) => {
+        const seg = payload.segmentation[name];
+        const flatPoints: number[] = Array.isArray(seg?.polygon)
+          ? (seg.polygon as number[][]).flatMap((pt: number[]) => [pt[0], pt[1]])
+          : [];
+        return {
+          id: `poly-${i}`,
+          name,
+          points: flatPoints,
+          fill: SEG_PALETTE[i].fill,
+          stroke: SEG_PALETTE[i].stroke,
+        };
+      })
+      : undefined;
+
+    // Safely parse and cleanly format numeric metrics to prevent excessive float layouts
+    const rawAngle = payload.metrics?.u1_pp_angle_deg ?? 112.5;
+    const u1_pp_angle = typeof rawAngle === 'number' && !isNaN(rawAngle) ? Number(rawAngle.toFixed(1)) : 112.5;
+
+    const u1_pp_status = u1_pp_angle > 115 ? 'warning' : u1_pp_angle < 105 ? 'warning' : 'normal';
+
+    const clinical_assessments = payload.clinical_assessment || {};
+
+    // Extract new 6 distances in mm and their severity levels
+    const labial_crest = Number((payload.metrics?.labial_crest_mm ?? 1.2).toFixed(2));
+    const labial_crest_severity = payload.metrics?.labial_crest_severity ?? 'Monitor';
+    const labial_midroot = Number((payload.metrics?.labial_midroot_mm ?? 1.5).toFixed(2));
+    const labial_midroot_severity = payload.metrics?.labial_midroot_severity ?? 'Monitor';
+    const labial_apex = Number((payload.metrics?.labial_apex_mm ?? 1.0).toFixed(2));
+    const labial_apex_severity = payload.metrics?.labial_apex_severity ?? 'Monitor';
+    const palatal_crest = Number((payload.metrics?.palatal_crest_mm ?? 1.4).toFixed(2));
+    const palatal_crest_severity = payload.metrics?.palatal_crest_severity ?? 'Monitor';
+    const palatal_midroot = Number((payload.metrics?.palatal_midroot_mm ?? 1.6).toFixed(2));
+    const palatal_midroot_severity = payload.metrics?.palatal_midroot_severity ?? 'Monitor';
+    const palatal_apex = Number((payload.metrics?.palatal_apex_mm ?? 1.1).toFixed(2));
+    const palatal_apex_severity = payload.metrics?.palatal_apex_severity ?? 'Monitor';
+
+    // CRITICAL: extract mm_per_pixel from _debug for zonal distance computation.
+    // Per design rule: NEVER hardcode or guess the calibration value.
+    // The backend now exposes it in payload._debug.mm_per_pixel.
+    const mmPerPixel = Number(payload._debug?.mm_per_pixel ?? 0);
+    if (!mmPerPixel || mmPerPixel <= 0) {
+      console.warn('[DashboardApp] mm_per_pixel missing or zero in _debug — zonal mm labels will fallback to 0');
+    }
+
+    const normalizedResults = {
+      u1_pp_angle,
+      u1_pp_status,
+      labial_crest,
+      labial_crest_severity,
+      labial_midroot,
+      labial_midroot_severity,
+      labial_apex,
+      labial_apex_severity,
+      palatal_crest,
+      palatal_crest_severity,
+      palatal_midroot,
+      palatal_midroot_severity,
+      palatal_apex,
+      palatal_apex_severity,
+      clinical_assessments,
+      metrics: payload.metrics || null,
+      measurement_lines: payload.measurement_lines || null,
+      global_min_lines: (payload.global_min_lines as GlobalMinLines) || null,  // 2-line global min sweep
+      mm_per_pixel: mmPerPixel,                                            // NEW: dynamic calibration
+      annotations: { keypoints: apiKeypoints, polygons: apiPolygons },
+    };
+
+    setResults(normalizedResults);
+    setMeasurementMode('standard');  // always start on standard after a fresh analysis
+  }, []);
+
   const handleAnalyze = useCallback(async () => {
     if (!file) return;
     setIsLoading(true);
@@ -207,101 +305,7 @@ export default function DashboardApp() {
       const payload = data?.data || data || {};
       console.log("UNWRAPPED PAYLOAD:", payload);
 
-      // Clinical label order: Upper_tip, Upper_apex, Labial_midroot, Labial_crest,
-      // Palatal_midroot, Palatal_crest, ANS, PNS, LB, PB
-      const KP_NAMES = [
-        'Upper_tip', 'Upper_apex', 'Labial_midroot', 'Labial_crest',
-        'Palatal_midroot', 'Palatal_crest', 'ANS', 'PNS', 'LB', 'PB',
-      ];
-      // Backend returns segmentation as keyed dict; matches CephCanvasEditor POLY_PALETTE order
-      const SEG_NAMES = ['Upper_incisor', 'Labial_bone', 'Palatal_bone'] as const;
-      const SEG_PALETTE = [
-        { fill: 'rgba(6, 182, 212, 0.15)', stroke: 'rgba(6, 182, 212, 0.9)' },
-        { fill: 'rgba(236, 72, 153, 0.15)', stroke: 'rgba(236, 72, 153, 0.9)' },
-        { fill: 'rgba(16, 185, 129, 0.15)', stroke: 'rgba(16, 185, 129, 0.9)' },
-      ];
-
-      const apiKeypoints = Array.isArray(payload.landmarks)
-        ? payload.landmarks.map((kp: any, i: number) => ({
-          id: `kp-${i}`,
-          name: KP_NAMES[i] ?? kp?.name ?? `kp-${i}`,
-          x: Number(kp?.x ?? 0),
-          y: Number(kp?.y ?? 0),
-        }))
-        : undefined;
-
-      // Backend polygon: [[x,y],...] → CephCanvasEditor needs flat [x,y,x,y,...]
-      const apiPolygons = payload.segmentation
-        ? SEG_NAMES.map((name, i) => {
-          const seg = payload.segmentation[name];
-          const flatPoints: number[] = Array.isArray(seg?.polygon)
-            ? (seg.polygon as number[][]).flatMap((pt: number[]) => [pt[0], pt[1]])
-            : [];
-          return {
-            id: `poly-${i}`,
-            name,
-            points: flatPoints,
-            fill: SEG_PALETTE[i].fill,
-            stroke: SEG_PALETTE[i].stroke,
-          };
-        })
-        : undefined;
-
-      // Safely parse and cleanly format numeric metrics to prevent excessive float layouts
-      const rawAngle = payload.metrics?.u1_pp_angle_deg ?? 112.5;
-      const u1_pp_angle = typeof rawAngle === 'number' && !isNaN(rawAngle) ? Number(rawAngle.toFixed(1)) : 112.5;
-
-      const u1_pp_status = u1_pp_angle > 115 ? 'warning' : u1_pp_angle < 105 ? 'warning' : 'normal';
-
-      const clinical_assessments = payload.clinical_assessment || {};
-
-      // Extract new 6 distances in mm and their severity levels
-      const labial_crest = Number((payload.metrics?.labial_crest_mm ?? 1.2).toFixed(2));
-      const labial_crest_severity = payload.metrics?.labial_crest_severity ?? 'Monitor';
-      const labial_midroot = Number((payload.metrics?.labial_midroot_mm ?? 1.5).toFixed(2));
-      const labial_midroot_severity = payload.metrics?.labial_midroot_severity ?? 'Monitor';
-      const labial_apex = Number((payload.metrics?.labial_apex_mm ?? 1.0).toFixed(2));
-      const labial_apex_severity = payload.metrics?.labial_apex_severity ?? 'Monitor';
-      const palatal_crest = Number((payload.metrics?.palatal_crest_mm ?? 1.4).toFixed(2));
-      const palatal_crest_severity = payload.metrics?.palatal_crest_severity ?? 'Monitor';
-      const palatal_midroot = Number((payload.metrics?.palatal_midroot_mm ?? 1.6).toFixed(2));
-      const palatal_midroot_severity = payload.metrics?.palatal_midroot_severity ?? 'Monitor';
-      const palatal_apex = Number((payload.metrics?.palatal_apex_mm ?? 1.1).toFixed(2));
-      const palatal_apex_severity = payload.metrics?.palatal_apex_severity ?? 'Monitor';
-
-      // CRITICAL: extract mm_per_pixel from _debug for zonal distance computation.
-      // Per design rule: NEVER hardcode or guess the calibration value.
-      // The backend now exposes it in payload._debug.mm_per_pixel.
-      const mmPerPixel = Number(payload._debug?.mm_per_pixel ?? 0);
-      if (!mmPerPixel || mmPerPixel <= 0) {
-        console.warn('[DashboardApp] mm_per_pixel missing or zero in _debug — zonal mm labels will fallback to 0');
-      }
-
-      const normalizedResults = {
-        u1_pp_angle,
-        u1_pp_status,
-        labial_crest,
-        labial_crest_severity,
-        labial_midroot,
-        labial_midroot_severity,
-        labial_apex,
-        labial_apex_severity,
-        palatal_crest,
-        palatal_crest_severity,
-        palatal_midroot,
-        palatal_midroot_severity,
-        palatal_apex,
-        palatal_apex_severity,
-        clinical_assessments,
-        metrics: payload.metrics || null,
-        measurement_lines: payload.measurement_lines || null,
-        global_min_lines: (payload.global_min_lines as GlobalMinLines) || null,  // 2-line global min sweep
-        mm_per_pixel: mmPerPixel,                                            // NEW: dynamic calibration
-        annotations: { keypoints: apiKeypoints, polygons: apiPolygons },
-      };
-
-      setResults(normalizedResults);
-      setMeasurementMode('standard');  // always start on standard after a fresh analysis
+      processAndSetResults(payload);
     } catch (err: any) {
       console.error("Analysis failed:", err);
       if (err.name === 'AbortError') {
@@ -362,6 +366,7 @@ export default function DashboardApp() {
                         ? results.global_min_lines[cervicalOffsetMm.toFixed(1)]
                         : undefined
                     }
+                    onRecalculate={processAndSetResults}
                   />
                 </div>
               ) : previewUrl ? (

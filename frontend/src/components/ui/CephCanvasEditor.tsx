@@ -59,6 +59,7 @@ interface Props {
   globalMinLines?: GlobalMinLines; // Min Distance mode — 2 bold bottleneck lines
   onKeypointsChange?: (kps: Keypoint[]) => void;
   onPolygonsChange?: (polys: PolygonShape[]) => void;
+  onRecalculate?: (results: any) => void;
 }
 
 // ── Medical imaging colour palette ───────────────────────────────────────────
@@ -136,6 +137,7 @@ export default function CephCanvasEditor({
   globalMinLines,
   onKeypointsChange,
   onPolygonsChange,
+  onRecalculate,
 }: Props) {
   const containerRef  = useRef<HTMLDivElement>(null);
   const stageRef      = useRef<any>(null);
@@ -189,12 +191,14 @@ export default function CephCanvasEditor({
     const baseUrl = (import.meta.env && (import.meta.env as any).VITE_API_URL) || 'http://localhost:8123';
     const payload = {
       image_name: imageFile.name,
-      keypoints: keypoints.map(kp => ({ name: kp.name, x: kp.x, y: kp.y })),
+      image_width: img ? img.width : 0,
+      image_height: img ? img.height : 0,
+      keypoints: keypoints.map(kp => ({ name: kp.name, x: kp.x, y: kp.y, confidence: kp.confidence })),
       polygons: polygons.map(poly => ({ name: poly.name, points: poly.points })),
     };
 
     try {
-      const res = await fetch(`${baseUrl}/api/v1/analyze`, {
+      const res = await fetch(`${baseUrl}/api/v1/recalculate`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload),
@@ -202,12 +206,16 @@ export default function CephCanvasEditor({
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const data = await res.json();
       console.log('[CephEditor] Confirm & Save — live recalculation complete:', data);
+      if (onRecalculate) {
+        onRecalculate(data.data || data);
+      }
+      setIsFrozen(false);
     } catch (err) {
       console.error('[CephEditor] Confirm & Save failed:', err);
       // unfreeze on failure so user can retry
       setIsFrozen(false);
     }
-  }, [isFrozen, imageFile, keypoints, polygons]);
+  }, [isFrozen, imageFile, keypoints, polygons, img, onRecalculate]);
 
   // Re-enable editing on canvas when unfrozen
   useEffect(() => {

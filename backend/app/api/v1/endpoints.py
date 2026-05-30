@@ -1,5 +1,5 @@
-from fastapi import APIRouter, UploadFile, File, Form, HTTPException
-from app.models.schemas import AnalysisResponse
+from fastapi import APIRouter, UploadFile, File, Form, HTTPException, Body
+from app.models.schemas import AnalysisResponse, RecalculateRequest
 from app.services.analysis_service import analysis_service
 
 router = APIRouter()
@@ -32,4 +32,17 @@ async def analyze_endpoint(
         raise HTTPException(status_code=500, detail=f"Analysis pipeline error: {e}")
 
     # Wrap in AnalysisResponse
+    return AnalysisResponse(status=result["status"], data=result)
+
+@router.post("/recalculate", response_model=AnalysisResponse)
+async def recalculate_endpoint(payload: RecalculateRequest = Body(...)):
+    """
+    Recalculate clinical metrics and bone gaps from manually edited polygons and keypoints 
+    without re-running the ML models.
+    """
+    try:
+        result = analysis_service().recalculate_from_polygons(payload)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Recalculation error: {e}")
+    
     return AnalysisResponse(status=result["status"], data=result)

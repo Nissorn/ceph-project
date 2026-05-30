@@ -143,3 +143,23 @@ class AnalysisRequest(BaseModel):
 class AnalysisResponse(BaseModel):
     status: str
     data: AnalysisResultData
+
+
+class RecalculateKeypoint(BaseModel):
+    name: str
+    x: float
+    y: float
+    confidence: Optional[float] = None
+
+
+class RecalculatePolygon(BaseModel):
+    name: str
+    points: List[float]
+
+
+class RecalculateRequest(BaseModel):
+    image_name: str
+    image_width: int
+    image_height: int
+    keypoints: List[RecalculateKeypoint]
+    polygons: List[RecalculatePolygon]

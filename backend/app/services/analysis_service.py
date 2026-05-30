@@ -49,6 +49,7 @@ warnings.filterwarnings("ignore")
 
 from src.phase3.biomechanics import BoneThicknessCalculator, classify_treatment, calculate_metrics
 from app.services.biomechanics import calculate_clinical_assessment
+from app.models.schemas import RecalculateRequest
 
 # ── constants ───────────────────────────────────────────────────────────────
 INPUT_SIZE = (512, 512)
@@ -1213,6 +1214,244 @@ class AnalysisService:
                 "orig_height": int(orig_h),
                 "scale_x": float(round(scale_x, 6)),
                 "scale_y": float(round(scale_y, 6)),
+                "device": str(self._device),
+                "mm_per_pixel": float(mm_per_pixel),
+            },
+        }
+        return result
+
+    def recalculate_from_polygons(self, payload: RecalculateRequest) -> dict:
+        """
+        Bypasses AI inference and reconstructs masks directly from frontend polygon edits.
+        Re-runs Phase 3 Biomechanics and Clinical Engine logic.
+        """
+        image_name = payload.image_name
+        orig_w = payload.image_width
+        orig_h = payload.image_height
+        mm_per_pixel = self._get_mm_per_pixel(image_name)
+
+        # 1. Reconstruct raw_coords_orig
+        # Must match KEYPOINT_NAMES order exactly
+        raw_coords_orig = np.zeros((NUM_KEYPOINTS, 2), dtype=np.float32)
+        confidences = np.ones(NUM_KEYPOINTS, dtype=np.float32)
+        keypoint_dict = {kp.name: kp for kp in payload.keypoints}
+        
+        for i, name in enumerate(KEYPOINT_NAMES):
+            if name in keypoint_dict:
+                kp = keypoint_dict[name]
+                raw_coords_orig[i] = [kp.x, kp.y]
+                if kp.confidence is not None:
+                    confidences[i] = kp.confidence
+            else:
+                # Fallback to zeros if missing
+                raw_coords_orig[i] = [0.0, 0.0]
+                confidences[i] = 0.0
+
+        # 2. Reconstruct corrected_masks
+        # We need [Upper_incisor, Labial_bone, Palatal_bone] in MASK_IDX order
+        poly_dict = {poly.name: poly for poly in payload.polygons}
+        
+        mask_names = ['Upper_incisor', 'Labial_bone', 'Palatal_bone']
+        corrected_masks = []
+        poly_incisor = []
+        poly_labial = []
+        poly_palatal = []
+
+        for name in mask_names:
+            mask = np.zeros((orig_h, orig_w), dtype=np.uint8)
+            poly_points = []
+            if name in poly_dict:
+                pts = poly_dict[name].points
+                if len(pts) >= 6:
+                    # CRITICAL FIX: Ensure shape is (N, 1, 2) and type is np.int32
+                    contour = np.array(pts).reshape((-1, 1, 2)).astype(np.int32)
+                    cv2.fillPoly(mask, [contour], 1)
+                    poly_points = np.array(pts).reshape((-1, 2)).tolist()
+            
+            corrected_masks.append(mask)
+            if name == 'Upper_incisor': poly_incisor = poly_points
+            if name == 'Labial_bone': poly_labial = poly_points
+            if name == 'Palatal_bone': poly_palatal = poly_points
+
+        # Diagnostics are empty for manual recalculation
+        snapping_diag = {name: {"dx": 0.0, "dy": 0.0, "dist_px": 0.0, "note": "manual_override"} for name in KEYPOINT_NAMES}
+        mask_diag = {"note": "manual_override"}
+
+        # ── Step 7: Biomechanical angle & Bone Thickness (Phase 3 Engine) ───
+        tip = raw_coords_orig[0]
+        apex = raw_coords_orig[1]
+        u1_vec = apex - tip
+        u1_len = float(np.linalg.norm(u1_vec))
+        u1_unit = u1_vec / u1_len if u1_len > 1e-6 else np.array([0.0, 1.0], dtype=np.float32)
+        u1_perp = _get_u1_perp(u1_unit)
+
+        # 1. Labial Crest Distance
+        labial_crest_pt = raw_coords_orig[3]
+        t_lc = np.dot(labial_crest_pt - tip, u1_unit)
+        P_axis_lc = tip + t_lc * u1_unit
+        P_tooth_lc = _find_tooth_boundary(corrected_masks[MASK_IDX_UPPER_INCISOR], P_axis_lc, u1_perp, max_dist_px=100.0)
+        labial_crest_px = np.linalg.norm(np.dot(labial_crest_pt - P_tooth_lc, u1_perp))
+        labial_crest_mm = float(labial_crest_px * mm_per_pixel)
+
+        # 4. Palatal Crest Distance
+        palatal_crest_pt = raw_coords_orig[5]
+        t_pc = np.dot(palatal_crest_pt - tip, u1_unit)
+        P_axis_pc = tip + t_pc * u1_unit
+        P_tooth_pc = _find_tooth_boundary(corrected_masks[MASK_IDX_UPPER_INCISOR], P_axis_pc, -u1_perp, max_dist_px=100.0)
+        palatal_crest_px = np.linalg.norm(np.dot(P_tooth_pc - palatal_crest_pt, u1_perp))
+        palatal_crest_mm = float(palatal_crest_px * mm_per_pixel)
+
+        # 2. Labial Midroot Distance
+        labial_midroot_pt = raw_coords_orig[2]
+        labial_midroot_px = _get_bone_thickness_at_point(corrected_masks[MASK_IDX_LABIAL_BONE], labial_midroot_pt, u1_perp, max_dist_px=150.0)
+        if labial_midroot_px <= 0:
+            labial_midroot_px = 0.0
+        labial_midroot_mm = float(labial_midroot_px * mm_per_pixel)
+
+        # 5. Palatal Midroot Distance
+        palatal_midroot_pt = raw_coords_orig[4]
+        palatal_midroot_px = _get_bone_thickness_at_point(corrected_masks[MASK_IDX_PALATAL_BONE], palatal_midroot_pt, -u1_perp, max_dist_px=150.0)
+        if palatal_midroot_px <= 0:
+            palatal_midroot_px = 0.0
+        palatal_midroot_mm = float(palatal_midroot_px * mm_per_pixel)
+
+        # 3. Labial Apex Distance (LB-Apex)
+        labial_apex_pt = raw_coords_orig[8]
+        labial_apex_px = np.linalg.norm(np.dot(labial_apex_pt - apex, u1_perp))
+        labial_apex_mm = float(labial_apex_px * mm_per_pixel)
+
+        # 6. Palatal Apex Distance (PB-Apex)
+        palatal_apex_pt = raw_coords_orig[9]
+        palatal_apex_px = np.linalg.norm(np.dot(apex - palatal_apex_pt, u1_perp))
+        palatal_apex_mm = float(palatal_apex_px * mm_per_pixel)
+
+        # Calculate severity flags for the six distances
+        labial_crest_sev = _get_distance_severity(labial_crest_mm)
+        labial_midroot_sev = _get_distance_severity(labial_midroot_mm)
+        labial_apex_sev = _get_distance_severity(labial_apex_mm)
+        palatal_crest_sev = _get_distance_severity(palatal_crest_mm)
+        palatal_midroot_sev = _get_distance_severity(palatal_midroot_mm)
+        palatal_apex_sev = _get_distance_severity(palatal_apex_mm)
+
+        # Target coordinates for drawing perpendicular measurement lines
+        labial_crest_target = P_tooth_lc
+        palatal_crest_target = P_tooth_pc
+
+        labial_midroot_target = labial_midroot_pt + labial_midroot_px * u1_perp
+        palatal_midroot_target = palatal_midroot_pt - palatal_midroot_px * u1_perp
+
+        labial_apex_target = apex + labial_apex_px * u1_perp
+        palatal_apex_target = apex - palatal_apex_px * u1_perp
+
+        def _to_line_coords(pt1, pt2):
+            return [[float(round(pt1[0], 3)), float(round(pt1[1], 3))], [float(round(pt2[0], 3)), float(round(pt2[1], 3))]]
+
+        measurement_lines = {
+            "labial_crest_line": _to_line_coords(labial_crest_pt, labial_crest_target),
+            "labial_midroot_line": _to_line_coords(labial_midroot_pt, labial_midroot_target),
+            "labial_apex_line": _to_line_coords(apex, labial_apex_target),
+            "palatal_crest_line": _to_line_coords(palatal_crest_pt, palatal_crest_target),
+            "palatal_midroot_line": _to_line_coords(palatal_midroot_pt, palatal_midroot_target),
+            "palatal_apex_line": _to_line_coords(apex, palatal_apex_target),
+        }
+
+        # ── Step 7.55: Global Minimum Distance Sweep ──────────────────────────────
+        global_min_lines = calculate_global_minimum(
+            tip=raw_coords_orig[0],
+            apex=raw_coords_orig[1],
+            labial_crest_pt=raw_coords_orig[3],
+            palatal_crest_pt=raw_coords_orig[5],
+            u1_unit=u1_unit,
+            u1_perp=u1_perp,
+            masks=corrected_masks,
+            mm_per_pixel=mm_per_pixel,
+        )
+
+        # ── Step 7.6: Clinical Assessment Engine ──
+        clinical_assessment_dict = {}
+
+        true_min_labial_standard = min(float(labial_crest_mm), float(labial_midroot_mm), float(labial_apex_mm))
+        true_min_palatal_standard = min(float(palatal_crest_mm), float(palatal_midroot_mm), float(palatal_apex_mm))
+        clinical_assessment_dict["standard"] = calculate_clinical_assessment(
+            labial_min_mm=true_min_labial_standard,
+            palatal_min_mm=true_min_palatal_standard,
+            labial_apex_mm=float(labial_apex_mm),
+            palatal_apex_mm=float(palatal_apex_mm),
+            upper_tip=raw_coords_orig[0],
+            upper_apex=raw_coords_orig[1],
+            ans=raw_coords_orig[6],
+            pns=raw_coords_orig[7],
+        )
+
+        for offset_key, offset_data in global_min_lines.items():
+            clinical_assessment_dict[offset_key] = calculate_clinical_assessment(
+                labial_min_mm=float(offset_data["labial_mm"]),
+                palatal_min_mm=float(offset_data["palatal_mm"]),
+                labial_apex_mm=float(labial_apex_mm),
+                palatal_apex_mm=float(palatal_apex_mm),
+                upper_tip=raw_coords_orig[0],
+                upper_apex=raw_coords_orig[1],
+                ans=raw_coords_orig[6],
+                pns=raw_coords_orig[7],
+            )
+
+        # ── Step 8: Assemble response dict ──────────────────────────────────
+        def _lm_list(coords, confs, snapped_flags):
+            return [
+                {
+                    "name": KEYPOINT_NAMES[k],
+                    "x": float(round(coords[k, 0], 3)),
+                    "y": float(round(coords[k, 1], 3)),
+                    "confidence": float(round(confs[k], 4)),
+                    "snapped": snapped_flags,
+                }
+                for k in range(NUM_KEYPOINTS)
+            ]
+
+        result = {
+            "status": "success",
+            "image_id": image_name,
+            "landmarks": _lm_list(raw_coords_orig, confidences, False),
+            "raw_landmarks": _lm_list(raw_coords_orig, confidences, False),
+            "segmentation": {
+                "Upper_incisor": {
+                    "polygon": [[float(x), float(y)] for x, y in poly_incisor] if poly_incisor else [],
+                    "pixel_count": int(corrected_masks[MASK_IDX_UPPER_INCISOR].sum()),
+                },
+                "Labial_bone": {
+                    "polygon": [[float(x), float(y)] for x, y in poly_labial] if poly_labial else [],
+                    "pixel_count": int(corrected_masks[MASK_IDX_LABIAL_BONE].sum()),
+                },
+                "Palatal_bone": {
+                    "polygon": [[float(x), float(y)] for x, y in poly_palatal] if poly_palatal else [],
+                    "pixel_count": int(corrected_masks[MASK_IDX_PALATAL_BONE].sum()),
+                },
+            },
+            "snapping": snapping_diag,
+            "mask_overlap_diagnostic": mask_diag,
+            "measurement_lines": measurement_lines,
+            "global_min_lines": global_min_lines,
+            "metrics": {
+                "u1_pp_angle_deg": float(_compute_u1_pp_angle_deg(raw_coords_orig)),
+                "labial_crest_mm": float(round(labial_crest_mm, 3)),
+                "labial_crest_severity": labial_crest_sev,
+                "labial_midroot_mm": float(round(labial_midroot_mm, 3)),
+                "labial_midroot_severity": labial_midroot_sev,
+                "labial_apex_mm": float(round(labial_apex_mm, 3)),
+                "labial_apex_severity": labial_apex_sev,
+                "palatal_crest_mm": float(round(palatal_crest_mm, 3)),
+                "palatal_crest_severity": palatal_crest_sev,
+                "palatal_midroot_mm": float(round(palatal_midroot_mm, 3)),
+                "palatal_midroot_severity": palatal_midroot_sev,
+                "palatal_apex_mm": float(round(palatal_apex_mm, 3)),
+                "palatal_apex_severity": palatal_apex_sev,
+            },
+            "clinical_assessment": clinical_assessment_dict,
+            "_debug": {
+                "orig_width": int(orig_w),
+                "orig_height": int(orig_h),
+                "scale_x": 1.0,
+                "scale_y": 1.0,
                 "device": str(self._device),
                 "mm_per_pixel": float(mm_per_pixel),
             },
