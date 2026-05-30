@@ -15,15 +15,15 @@ import '../styles/global.css';
     <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
     <title>Singapodent | Cephalometric Analysis</title>
   </head>
-  <body class="h-screen overflow-hidden flex flex-col bg-slate-50 transition-colors duration-300 text-slate-900 antialiased selection:bg-singapodent-accent selection:text-white" style="font-family: 'Plus Jakarta Sans', sans-serif;">
+  <body class="h-screen w-full flex flex-col overflow-hidden bg-slate-50 dark:bg-slate-900 transition-colors duration-300 text-slate-900 dark:text-slate-100 antialiased selection:bg-singapodent-accent selection:text-white" style="font-family: 'Plus Jakarta Sans', sans-serif;">
 
-    <header class="bg-white border-b border-slate-200 z-50 transition-colors duration-300 relative">
+    <header class="shrink-0 bg-white dark:bg-slate-800 border-b border-slate-200 dark:border-slate-700 z-50 transition-colors duration-300 relative">
       <div class="max-w-[1600px] w-full mx-auto px-6 h-[72px] flex items-center justify-between">
         <div class="flex items-center gap-3 group cursor-default">
           <div class="bg-white px-3 py-1.5 rounded-xl transition-all duration-300 shadow-sm flex items-center justify-center">
             <img src="/logo.webp" alt="Singapodent Logo" class="h-8 md:h-10 w-auto object-contain transition-transform duration-300 group-hover:scale-[1.02] drop-shadow-sm" />
           </div>
-          <span class="font-light text-singapodent-accent text-xs md:text-sm tracking-wide uppercase border-l border-slate-200 pl-3 self-center hidden sm:inline">AI Dashboard</span>
+          <span class="font-light text-singapodent-accent dark:text-singapodent-accent text-xs md:text-sm tracking-wide uppercase border-l border-slate-200 dark:border-slate-700 pl-3 self-center hidden sm:inline">AI Dashboard</span>
         </div>
         <div class="flex items-center space-x-4">
           <ThemeToggle client:load />
@@ -31,7 +31,7 @@ import '../styles/global.css';
       </div>
     </header>
 
-    <main class="flex-1 overflow-hidden w-full mx-auto max-w-[1600px] p-6 pt-8">
+    <main class="flex-1 flex overflow-hidden w-full mx-auto max-w-[1600px]">
       <DashboardApp client:load />
     </main>
     

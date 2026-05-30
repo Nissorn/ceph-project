@@ -48,6 +48,7 @@ sys.path.insert(0, str(ROOT))
 warnings.filterwarnings("ignore")
 
 from src.phase3.biomechanics import BoneThicknessCalculator, classify_treatment, calculate_metrics
+from app.services.biomechanics import calculate_clinical_assessment
 
 # ── constants ───────────────────────────────────────────────────────────────
 INPUT_SIZE = (512, 512)
@@ -611,32 +612,39 @@ def _find_tooth_boundary(tooth_mask: np.ndarray, start_pt: np.ndarray, direction
 # analyze_image(), just swept over N=60 points instead of 1.
 
 def calculate_global_minimum(
-    tip: np.ndarray,
-    apex: np.ndarray,
-    u1_unit: np.ndarray,
-    u1_perp: np.ndarray,
+    tip: tuple,
+    apex: tuple,
+    labial_crest_pt: tuple,
+    palatal_crest_pt: tuple,
+    u1_unit: tuple,
+    u1_perp: tuple,
     masks: list,
     mm_per_pixel: float,
-    n_sweep: int = 60,
-    cervical_offset_mm: float = 1.5,
 ) -> dict:
     """
     Global Minimum Distance Algorithm — sweeps the ENTIRE working root length.
 
-    Finds the SINGLE thinnest bone gap on each side (labial / palatal).
-    Origin of each result line is the TOOTH SURFACE (not the long-axis center),
-    so lines are always anchored to visible anatomy.
+    Finds the SINGLE thinnest bone gap on each side (labial / palatal) for multiple offsets.
+    Pre-computes offsets 0.0 to 5.0 mm to allow zero-latency UI interaction.
 
     Args:
-        tip:          Upper_tip  (x, y) image px — NOT mutated
-        apex:         Upper_apex (x, y) image px — NOT mutated
-        u1_unit:      Unit vector along long axis (tip → apex)   — NOT mutated
-        u1_perp:      Unit vector perpendicular (labial / +x direction) — NOT mutated
-        masks:        [tooth_mask, labial_mask, palatal_mask] corrected binary masks
-        mm_per_pixel: Per-image calibration scalar (from calibration.csv)
-        n_sweep:      Sample count along full working length (default 60)
+        tip:              Upper_tip  (x, y) image px — NOT mutated
+        apex:             Upper_apex (x, y) image px — NOT mutated
+        labial_crest_pt:  Labial crest point for baseline projection
+        palatal_crest_pt: Palatal crest point for baseline projection
+        u1_unit:          Unit vector along long axis (tip → apex)   — NOT mutated
+        u1_perp:          Unit vector perpendicular (labial / +x direction) — NOT mutated
+        masks:            [tooth_mask, labial_mask, palatal_mask] corrected binary masks
+        mm_per_pixel:     Per-image calibration scalar (from calibration.csv)
 
     Returns:
+        Dict mapping string offsets to their results:
+        {
+          "0.0": { "labial_line": [...], "palatal_line": [...], "labial_mm": X, "palatal_mm": Y },
+          "0.5": { ... },
+          ...
+          "5.0": { ... }
+        }
         {
           "labial_line":  [[x_tooth, y_tooth], [x_bone, y_bone]],
           "palatal_line": [[x_tooth, y_tooth], [x_bone, y_bone]],
@@ -645,14 +653,15 @@ def calculate_global_minimum(
         }
 
     Geometry invariants:
-        - Cervical offset: start of sweep is 1.5 mm from tip (avoids crest noise).
+        - Baseline: offset is applied APICALLY from the true geometric crest projection.
         - Labial side:  rays cast in  +u1_perp direction.
         - Palatal side: rays cast in  -u1_perp direction.
         - Mutation-free: working copies made of all ndarray inputs.
     """
-    # Immutable working copies — never write back to caller's arrays
     tip_  = np.array(tip,     dtype=np.float32)
     apex_ = np.array(apex,    dtype=np.float32)
+    lc_   = np.array(labial_crest_pt, dtype=np.float32)
+    pc_   = np.array(palatal_crest_pt, dtype=np.float32)
     unit_ = np.array(u1_unit, dtype=np.float32)
     perp_ = np.array(u1_perp, dtype=np.float32)
 
@@ -663,87 +672,92 @@ def calculate_global_minimum(
     total_len = float(np.linalg.norm(apex_ - tip_))
     if total_len < 1e-6:
         fallback = [[float(tip_[0]), float(tip_[1])], [float(tip_[0]), float(tip_[1])]]
-        return {
-            "labial_line":  fallback,
-            "palatal_line": fallback,
-            "labial_mm":    0.0,
-            "palatal_mm":   0.0,
+        fallback_res = {
+            "labial_line": fallback, "palatal_line": fallback,
+            "labial_mm": 0.0, "palatal_mm": 0.0,
         }
+        return {f"{off:.1f}": fallback_res for off in np.arange(0.0, 5.5, 0.5)}
 
-    # Sweep from custom offset (cervical) to 66% of root length (ignore apex)
-    cervical_offset_px = min(cervical_offset_mm / mm_per_pixel, total_len * 0.15)
-    t_start = cervical_offset_px
-    t_end   = total_len * 0.66
+    # Project crests onto long axis to find baselines
+    t_crest_labial = float(np.dot(lc_ - tip_, unit_))
+    t_crest_palatal = float(np.dot(pc_ - tip_, unit_))
 
-    if t_start >= t_end:
-        t_start = t_end
+    t_end = total_len * 0.66
+    
+    # ── Dense Pre-computation ─────────────────────────────────────────────────
+    # Generate 150 points from the highest crest to the end boundary
+    n_samples = 150
+    t_min_crest = min(t_crest_labial, t_crest_palatal)
+    # Ensure t_min_crest doesn't exceed t_end
+    if t_min_crest >= t_end:
+        t_min_crest = t_end - 1.0
+        
+    t_samples = np.linspace(t_min_crest, t_end, n_samples)
+    
+    # Store distance for each t: (t, px_dist, surface_pt, bone_pt)
+    labial_data = []
+    palatal_data = []
 
-    # ── Per-side trackers ──────────────────────────────────────────────────────
-    best_labial_px:  float            = float("inf")
-    best_labial_pt:  Optional[np.ndarray] = None   # tooth surface origin
-    best_labial_end: Optional[np.ndarray] = None   # bone surface endpoint
+    for t_sample in t_samples:
+        P_axis = tip_ + t_sample * unit_
 
-    best_palatal_px: float            = float("inf")
-    best_palatal_pt: Optional[np.ndarray] = None
-    best_palatal_end: Optional[np.ndarray] = None
-
-    for i in range(n_sweep):
-        frac     = i / max(n_sweep - 1, 1)
-        t_sample = t_start + frac * (t_end - t_start)
-        P_axis   = tip_ + t_sample * unit_        # point on long axis
-
-        # ── Labial side ───────────────────────────────────────────────────────
-        # Step A: march from axis in +perp direction → exit tooth → tooth surface
+        # Labial
         P_lab_tooth = _find_tooth_boundary(tooth_mask, P_axis, perp_, max_dist_px=120.0)
-        # Step B: from tooth surface → find labial bone gap
-        lab_px = _get_bone_thickness_at_point(
-            labial_mask, P_lab_tooth, perp_, max_dist_px=150.0
-        )
-        if lab_px > 0.0 and lab_px < best_labial_px:
-            best_labial_px  = lab_px
-            best_labial_pt  = P_lab_tooth.copy()
-            best_labial_end = P_lab_tooth + lab_px * perp_
-
-        # ── Palatal side ──────────────────────────────────────────────────────
+        lab_px = _get_bone_thickness_at_point(labial_mask, P_lab_tooth, perp_, max_dist_px=150.0)
+        if lab_px > 0.0:
+            labial_data.append((t_sample, lab_px, P_lab_tooth.copy(), P_lab_tooth + lab_px * perp_))
+            
+        # Palatal
         P_pal_tooth = _find_tooth_boundary(tooth_mask, P_axis, -perp_, max_dist_px=120.0)
-        pal_px = _get_bone_thickness_at_point(
-            palatal_mask, P_pal_tooth, -perp_, max_dist_px=150.0
-        )
-        if pal_px > 0.0 and pal_px < best_palatal_px:
-            best_palatal_px  = pal_px
-            best_palatal_pt  = P_pal_tooth.copy()
-            best_palatal_end = P_pal_tooth - pal_px * perp_
+        pal_px = _get_bone_thickness_at_point(palatal_mask, P_pal_tooth, -perp_, max_dist_px=150.0)
+        if pal_px > 0.0:
+            palatal_data.append((t_sample, pal_px, P_pal_tooth.copy(), P_pal_tooth - pal_px * perp_))
 
-    # ── Convert to [[x1,y1],[x2,y2]] format ──────────────────────────────────
     def _fmt(p1: np.ndarray, p2: np.ndarray) -> list:
         return [
             [float(round(float(p1[0]), 3)), float(round(float(p1[1]), 3))],
             [float(round(float(p2[0]), 3)), float(round(float(p2[1]), 3))],
         ]
 
-    # Fallback: use axis midpoint if no valid ray found (degenerate mask)
-    mid = tip_ + (t_start + t_end) / 2.0 * unit_
+    # ── Filter and Find Minimums for all Offsets ──────────────────────────────
+    results = {}
+    offsets = [round(x * 0.1, 1) for x in range(51)]
 
-    if best_labial_pt is not None:
-        labial_line = _fmt(best_labial_pt, best_labial_end)
-        labial_mm   = float(round(best_labial_px * mm_per_pixel, 3))
-    else:
-        labial_line = _fmt(mid, mid)
-        labial_mm   = 0.0
+    for offset_mm in offsets:
+        offset_px = offset_mm / mm_per_pixel
+        
+        # Labial minimum for this offset
+        t_start_l = min(t_crest_labial + offset_px, t_end)
+        valid_l = [d for d in labial_data if d[0] >= t_start_l]
+        if valid_l:
+            best_l = min(valid_l, key=lambda x: x[1])
+            l_line = _fmt(best_l[2], best_l[3])
+            l_mm = float(round(best_l[1] * mm_per_pixel, 3))
+        else:
+            mid_l = tip_ + ((t_start_l + t_end) / 2.0) * unit_
+            l_line = _fmt(mid_l, mid_l)
+            l_mm = 0.0
+            
+        # Palatal minimum for this offset
+        t_start_p = min(t_crest_palatal + offset_px, t_end)
+        valid_p = [d for d in palatal_data if d[0] >= t_start_p]
+        if valid_p:
+            best_p = min(valid_p, key=lambda x: x[1])
+            p_line = _fmt(best_p[2], best_p[3])
+            p_mm = float(round(best_p[1] * mm_per_pixel, 3))
+        else:
+            mid_p = tip_ + ((t_start_p + t_end) / 2.0) * unit_
+            p_line = _fmt(mid_p, mid_p)
+            p_mm = 0.0
+            
+        results[f"{offset_mm:.1f}"] = {
+            "labial_line": l_line,
+            "palatal_line": p_line,
+            "labial_mm": l_mm,
+            "palatal_mm": p_mm,
+        }
 
-    if best_palatal_pt is not None:
-        palatal_line = _fmt(best_palatal_pt, best_palatal_end)
-        palatal_mm   = float(round(best_palatal_px * mm_per_pixel, 3))
-    else:
-        palatal_line = _fmt(mid, mid)
-        palatal_mm   = 0.0
-
-    return {
-        "labial_line":  labial_line,
-        "palatal_line": palatal_line,
-        "labial_mm":    labial_mm,
-        "palatal_mm":   palatal_mm,
-    }
+    return results
 
 
 class AnalysisService:
@@ -897,7 +911,7 @@ class AnalysisService:
     # Main inference entry point                                        #
     # ------------------------------------------------------------------ #
 
-    def analyze_image(self, image_bytes: bytes, image_id: Optional[str] = None, cervical_offset_mm: float = 1.5) -> dict:
+    def analyze_image(self, image_bytes: bytes, image_id: Optional[str] = None) -> dict:
         """
         Process a raw upload (JPEG/PNG byte stream) through the full
         Phase 2A → Phase 2B → geometric snapping pipeline.
@@ -1103,119 +1117,43 @@ class AnalysisService:
         global_min_lines = calculate_global_minimum(
             tip=raw_coords_orig[0],
             apex=raw_coords_orig[1],
+            labial_crest_pt=raw_coords_orig[3],
+            palatal_crest_pt=raw_coords_orig[5],
             u1_unit=u1_unit,
             u1_perp=u1_perp,
             masks=corrected_masks,
             mm_per_pixel=mm_per_pixel,
-            cervical_offset_mm=cervical_offset_mm,
         )
 
-        # ── Step 7.6: Alveolar Bone Thickness Classification (Zhang et al. 2021) ──
-        # Define "Thin" as strictly < 0.5 mm and "Thick" as >= 0.5 mm to avoid edge-case None classifications
-        labial_thin = [labial_crest_mm < 0.5, labial_midroot_mm < 0.5, labial_apex_mm < 0.5]
-        palatal_thin = [palatal_crest_mm < 0.5, palatal_midroot_mm < 0.5, palatal_apex_mm < 0.5]
+        # ── Step 7.6: Clinical Assessment Engine ──
+        clinical_assessment_dict = {}
 
-        any_labial_thin = any(labial_thin)
-        any_palatal_thin = any(palatal_thin)
-        all_labial_thin = all(labial_thin)
-        all_palatal_thin = all(palatal_thin)
+        # Standard assessment (uses min of crest, midroot, apex)
+        true_min_labial_standard = min(float(labial_crest_mm), float(labial_midroot_mm), float(labial_apex_mm))
+        true_min_palatal_standard = min(float(palatal_crest_mm), float(palatal_midroot_mm), float(palatal_apex_mm))
+        clinical_assessment_dict["standard"] = calculate_clinical_assessment(
+            labial_min_mm=true_min_labial_standard,
+            palatal_min_mm=true_min_palatal_standard,
+            labial_apex_mm=float(labial_apex_mm),
+            palatal_apex_mm=float(palatal_apex_mm),
+            upper_tip=raw_coords_orig[0],
+            upper_apex=raw_coords_orig[1],
+            ans=raw_coords_orig[6],
+            pns=raw_coords_orig[7],
+        )
 
-        if not any_labial_thin and not any_palatal_thin:
-            bone_thickness_type = "Type 1 – Thick"
-            bone_thickness_interpretation = "Thick alveolar bone; Favorable bone support."
-        elif all_labial_thin and all_palatal_thin:
-            bone_thickness_type = "Type 4 – Vulnerably Thin"
-            bone_thickness_interpretation = "Very thin alveolar bone; High-risk morphology; compromised phenotype requiring extreme caution."
-        elif any_labial_thin and any_palatal_thin:
-            bone_thickness_type = "Type 3 – Thin with Double-Plate Concavities"
-            bone_thickness_interpretation = "Represents bilateral cortical thinning; indicates a higher risk of dehiscence/fenestration during movement."
-        else:
-            bone_thickness_type = "Type 2 – Relatively Thick with Mono-Plate Concavity"
-            bone_thickness_interpretation = "Represents unilateral cortical thinning."
-
-        # ── Step 7.7: Root Apex Position Classification ──
-        # Midway type logic using a 0.5 mm absolute tolerance: abs(LB_apex_mm - PB_apex_mm) <= 0.5 mm
-        apex_diff = labial_apex_mm - palatal_apex_mm
-        if abs(apex_diff) <= 0.5:
-            root_apex_position_type = "Midway"
-        elif labial_apex_mm < palatal_apex_mm:
-            root_apex_position_type = "Labial"
-        else:
-            root_apex_position_type = "Palatal"
-
-        # ── Step 7.8: Biomechanical Retraction Strategy ──
-        u1_pp_angle_deg = _compute_u1_pp_angle_deg(raw_coords_orig)
-        if u1_pp_angle_deg <= 105.0:
-            general_retraction = "Root torque + retraction (Maximum movement limited by PB distance)"
-        elif u1_pp_angle_deg < 110.0:
-            general_retraction = "Translation movement (Maximum movement limited by PB distance)"
-        else:
-            general_retraction = "Controlled tipping (Maximum movement limited by PB distance)"
-
-        # Angle zone for the Zhang et al. 2021 detailed matrix lookup
-        if u1_pp_angle_deg < 105.0:
-            angle_zone = "<105"
-        elif u1_pp_angle_deg <= 115.0:
-            angle_zone = "105-115"
-        else:
-            angle_zone = ">115"
-
-        # ── Step 7.9: Detailed Biomechanics Matrix ──
-        matrix_table = {
-            "Labial": {
-                "<105": {
-                    "Preferred biomechanics": "Light controlled tipping with torque control",
-                    "Biomechanics to avoid": "Uncontrolled proclination, labial root torque",
-                    "Clinical implication": "Uprighting is possible but labial cortical bone must be preserved",
-                },
-                "105-115": {
-                    "Preferred biomechanics": "Light controlled tipping or torque maintenance",
-                    "Biomechanics to avoid": "Bodily movement forward, uncontrolled tipping",
-                    "Clinical implication": "Avoid further labial displacement of the apex",
-                },
-                ">115": {
-                    "Preferred biomechanics": "Controlled tipping during retraction with strict torque control",
-                    "Biomechanics to avoid": "Uncontrolled tipping, labial root torque",
-                    "Clinical implication": "High risk; strict torque control is required",
-                },
-            },
-            "Midway": {
-                "<105": {
-                    "Preferred biomechanics": "Controlled proclination or bodily movement if bone allows",
-                    "Biomechanics to avoid": "Uncontrolled tipping",
-                    "Clinical implication": "Favorable prognosis",
-                },
-                "105-115": {
-                    "Preferred biomechanics": "Bodily movement (translation)",
-                    "Biomechanics to avoid": "Uncontrolled tipping",
-                    "Clinical implication": "Most favorable condition",
-                },
-                ">115": {
-                    "Preferred biomechanics": "Controlled tipping with torque control during retraction",
-                    "Biomechanics to avoid": "Uncontrolled tipping",
-                    "Clinical implication": "Safe if torque is well controlled",
-                },
-            },
-            "Palatal": {
-                "<105": {
-                    "Preferred biomechanics": "Careful movement; labial crown/root control may be required",
-                    "Biomechanics to avoid": "Palatal root torque, further retroclination",
-                    "Clinical implication": "Risk of palatal cortical perforation",
-                },
-                "105-115": {
-                    "Preferred biomechanics": "Bodily movement with caution",
-                    "Biomechanics to avoid": "Excessive palatal root torque",
-                    "Clinical implication": "Monitor palatal bone limits",
-                },
-                ">115": {
-                    "Preferred biomechanics": "Controlled tipping during retraction with apex control",
-                    "Biomechanics to avoid": "Retraction causing further palatal displacement of apex",
-                    "Clinical implication": "Retraction possible but avoid excessive palatal pressure",
-                },
-            },
-        }
-
-        b_matrix = matrix_table[root_apex_position_type][angle_zone]
+        # Offset zonal assessment (using pre-computed labial_mm/palatal_mm)
+        for offset_key, offset_data in global_min_lines.items():
+            clinical_assessment_dict[offset_key] = calculate_clinical_assessment(
+                labial_min_mm=float(offset_data["labial_mm"]),
+                palatal_min_mm=float(offset_data["palatal_mm"]),
+                labial_apex_mm=float(labial_apex_mm),
+                palatal_apex_mm=float(palatal_apex_mm),
+                upper_tip=raw_coords_orig[0],
+                upper_apex=raw_coords_orig[1],
+                ans=raw_coords_orig[6],
+                pns=raw_coords_orig[7],
+            )
 
         # ── Step 8: Assemble response dict ──────────────────────────────────
         def _lm_list(coords, confs, snapped_flags):
@@ -1254,7 +1192,7 @@ class AnalysisService:
             "measurement_lines": measurement_lines,
             "global_min_lines": global_min_lines,
             "metrics": {
-                "u1_pp_angle_deg": float(u1_pp_angle_deg),
+                "u1_pp_angle_deg": float(_compute_u1_pp_angle_deg(raw_coords_orig)),
                 "labial_crest_mm": float(round(labial_crest_mm, 3)),
                 "labial_crest_severity": labial_crest_sev,
                 "labial_midroot_mm": float(round(labial_midroot_mm, 3)),
@@ -1267,14 +1205,8 @@ class AnalysisService:
                 "palatal_midroot_severity": palatal_midroot_sev,
                 "palatal_apex_mm": float(round(palatal_apex_mm, 3)),
                 "palatal_apex_severity": palatal_apex_sev,
-                "bone_thickness_type": bone_thickness_type,
-                "bone_thickness_interpretation": bone_thickness_interpretation,
-                "root_apex_position_type": root_apex_position_type,
-                "general_retraction_strategy": general_retraction,
-                "preferred_biomechanics": b_matrix["Preferred biomechanics"],
-                "biomechanics_to_avoid": b_matrix["Biomechanics to avoid"],
-                "clinical_implication": b_matrix["Clinical implication"],
             },
+            "clinical_assessment": clinical_assessment_dict,
             # scale factors + calibration exposed for frontend verification
             "_debug": {
                 "orig_width": int(orig_w),

@@ -58,6 +58,17 @@ class MaskOverlapDiagnostic(BaseModel):
     note: Optional[str] = None
 
 
+class ClinicalAssessment(BaseModel):
+    u1_pp_angle_class: str
+    bone_thickness_type: str
+    bone_thickness_interpretation: str
+    root_apex_position_type: str
+    general_retraction_strategy: str
+    preferred_biomechanics: str
+    biomechanics_to_avoid: str
+    clinical_implication: str
+
+
 class Metrics(BaseModel):
     u1_pp_angle_deg: float
     labial_crest_mm: float
@@ -72,13 +83,6 @@ class Metrics(BaseModel):
     palatal_midroot_severity: str
     palatal_apex_mm: float
     palatal_apex_severity: str
-    bone_thickness_type: str
-    bone_thickness_interpretation: str
-    root_apex_position_type: str
-    general_retraction_strategy: str
-    preferred_biomechanics: str
-    biomechanics_to_avoid: str
-    clinical_implication: str
 
 
 class MeasurementLines(BaseModel):
@@ -125,8 +129,9 @@ class AnalysisResultData(BaseModel):
     snapping: Optional[Dict[str, Any]] = None
     mask_overlap_diagnostic: Optional[MaskOverlapDiagnostic] = None
     metrics: Metrics
+    clinical_assessment: Optional[Dict[str, ClinicalAssessment]] = None
     measurement_lines: Optional[MeasurementLines] = None
-    global_min_lines: Optional[GlobalMinLines] = None    # NEW: 2-line global minimum sweep
+    global_min_lines: Optional[Dict[str, GlobalMinLines]] = None    # NEW: 2-line global minimum sweep per offset
     _debug: Optional[DebugInfo] = None
 
 

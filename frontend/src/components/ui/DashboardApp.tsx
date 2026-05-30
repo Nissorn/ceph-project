@@ -75,22 +75,22 @@ function adaptMeasurementLinesToBoneThickness(ml: any, metrics?: any): Lines3Lev
       return { x1: seg[0][0], y1: seg[0][1], x2: seg[1][0], y2: seg[1][1] };
     };
 
-    const lCrest   = pick('labial_crest_line');
-    const lMid     = pick('labial_midroot_line');
-    const lApex    = pick('labial_apex_line');
-    const pCrest   = pick('palatal_crest_line');
-    const pMid     = pick('palatal_midroot_line');
-    const pApex    = pick('palatal_apex_line');
+    const lCrest = pick('labial_crest_line');
+    const lMid = pick('labial_midroot_line');
+    const lApex = pick('labial_apex_line');
+    const pCrest = pick('palatal_crest_line');
+    const pMid = pick('palatal_midroot_line');
+    const pApex = pick('palatal_apex_line');
 
     if (!lCrest || !lMid || !lApex || !pCrest || !pMid || !pApex) return undefined;
 
     // Pull mm distances from the metrics block for accurate ruler labels.
-    const lc = Number(metrics?.labial_crest_mm  ?? 0);
+    const lc = Number(metrics?.labial_crest_mm ?? 0);
     const lm = Number(metrics?.labial_midroot_mm ?? 0);
-    const la = Number(metrics?.labial_apex_mm    ?? 0);
-    const pc = Number(metrics?.palatal_crest_mm  ?? 0);
+    const la = Number(metrics?.labial_apex_mm ?? 0);
+    const pc = Number(metrics?.palatal_crest_mm ?? 0);
     const pm = Number(metrics?.palatal_midroot_mm ?? 0);
-    const pa = Number(metrics?.palatal_apex_mm   ?? 0);
+    const pa = Number(metrics?.palatal_apex_mm ?? 0);
 
     const makeSegment6 = (
       l: { x1: number; y1: number; x2: number; y2: number },
@@ -100,18 +100,18 @@ function adaptMeasurementLinesToBoneThickness(ml: any, metrics?: any): Lines3Lev
     ) => ({
       // Labial: landmark → tooth surface  (line start → end)
       labial_distance_mm: lDistMm,
-      labial_tooth_x: l.x1,  labial_tooth_y: l.y1,
-      labial_bone_x:  l.x2,  labial_bone_y:  l.y2,
+      labial_tooth_x: l.x1, labial_tooth_y: l.y1,
+      labial_bone_x: l.x2, labial_bone_y: l.y2,
       // Palatal: landmark → tooth surface
       palatal_distance_mm: pDistMm,
       palatal_tooth_x: p.x1, palatal_tooth_y: p.y1,
-      palatal_bone_x:  p.x2, palatal_bone_y:  p.y2,
+      palatal_bone_x: p.x2, palatal_bone_y: p.y2,
     });
 
     return {
       cervical: makeSegment6(lCrest, pCrest, lc, pc),
-      middle:   makeSegment6(lMid,   pMid,   lm, pm),
-      apical:   makeSegment6(lApex,  pApex,  la, pa),
+      middle: makeSegment6(lMid, pMid, lm, pm),
+      apical: makeSegment6(lApex, pApex, la, pa),
     };
   } catch {
     console.warn('[DashboardApp] adaptMeasurementLinesToBoneThickness: parse error', ml);
@@ -169,7 +169,7 @@ export default function DashboardApp() {
     if (!file) return;
     setIsLoading(true);
     setError(null);
-     
+
     // Deterministic network timeout protection via AbortController
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), 120000); // 120 seconds max boundary
@@ -177,14 +177,13 @@ export default function DashboardApp() {
     try {
       const formData = new FormData();
       formData.append('file', file);
-      formData.append('cervical_offset_mm', cervicalOffsetMm.toString());
-       
+
       const response = await fetch('http://localhost:8123/api/v1/analyze', {
         method: 'POST',
         body: formData,
         signal: controller.signal,
       });
-       
+
       if (!response.ok) {
         // Attempt to extract downstream structured JSON error safely
         let serverErrorMsg = '';
@@ -196,7 +195,7 @@ export default function DashboardApp() {
         }
         throw new Error(serverErrorMsg ? `Server Error: ${serverErrorMsg}` : `HTTP Request Failed (${response.status})`);
       }
-       
+
       let data;
       try {
         data = await response.json();
@@ -211,41 +210,41 @@ export default function DashboardApp() {
       // Clinical label order: Upper_tip, Upper_apex, Labial_midroot, Labial_crest,
       // Palatal_midroot, Palatal_crest, ANS, PNS, LB, PB
       const KP_NAMES = [
-        'Upper_tip','Upper_apex','Labial_midroot','Labial_crest',
-        'Palatal_midroot','Palatal_crest','ANS','PNS','LB','PB',
+        'Upper_tip', 'Upper_apex', 'Labial_midroot', 'Labial_crest',
+        'Palatal_midroot', 'Palatal_crest', 'ANS', 'PNS', 'LB', 'PB',
       ];
       // Backend returns segmentation as keyed dict; matches CephCanvasEditor POLY_PALETTE order
-      const SEG_NAMES = ['Upper_incisor','Labial_bone','Palatal_bone'] as const;
+      const SEG_NAMES = ['Upper_incisor', 'Labial_bone', 'Palatal_bone'] as const;
       const SEG_PALETTE = [
-        { fill: 'rgba(6, 182, 212, 0.15)',  stroke: 'rgba(6, 182, 212, 0.9)'  },
+        { fill: 'rgba(6, 182, 212, 0.15)', stroke: 'rgba(6, 182, 212, 0.9)' },
         { fill: 'rgba(236, 72, 153, 0.15)', stroke: 'rgba(236, 72, 153, 0.9)' },
         { fill: 'rgba(16, 185, 129, 0.15)', stroke: 'rgba(16, 185, 129, 0.9)' },
       ];
 
       const apiKeypoints = Array.isArray(payload.landmarks)
         ? payload.landmarks.map((kp: any, i: number) => ({
-            id:   `kp-${i}`,
-            name: KP_NAMES[i] ?? kp?.name ?? `kp-${i}`,
-            x:    Number(kp?.x ?? 0),
-            y:    Number(kp?.y ?? 0),
-          }))
+          id: `kp-${i}`,
+          name: KP_NAMES[i] ?? kp?.name ?? `kp-${i}`,
+          x: Number(kp?.x ?? 0),
+          y: Number(kp?.y ?? 0),
+        }))
         : undefined;
 
       // Backend polygon: [[x,y],...] → CephCanvasEditor needs flat [x,y,x,y,...]
       const apiPolygons = payload.segmentation
         ? SEG_NAMES.map((name, i) => {
-            const seg = payload.segmentation[name];
-            const flatPoints: number[] = Array.isArray(seg?.polygon)
-              ? (seg.polygon as number[][]).flatMap((pt: number[]) => [pt[0], pt[1]])
-              : [];
-            return {
-              id:     `poly-${i}`,
-              name,
-              points: flatPoints,
-              fill:   SEG_PALETTE[i].fill,
-              stroke: SEG_PALETTE[i].stroke,
-            };
-          })
+          const seg = payload.segmentation[name];
+          const flatPoints: number[] = Array.isArray(seg?.polygon)
+            ? (seg.polygon as number[][]).flatMap((pt: number[]) => [pt[0], pt[1]])
+            : [];
+          return {
+            id: `poly-${i}`,
+            name,
+            points: flatPoints,
+            fill: SEG_PALETTE[i].fill,
+            stroke: SEG_PALETTE[i].stroke,
+          };
+        })
         : undefined;
 
       // Safely parse and cleanly format numeric metrics to prevent excessive float layouts
@@ -253,12 +252,8 @@ export default function DashboardApp() {
       const u1_pp_angle = typeof rawAngle === 'number' && !isNaN(rawAngle) ? Number(rawAngle.toFixed(1)) : 112.5;
 
       const u1_pp_status = u1_pp_angle > 115 ? 'warning' : u1_pp_angle < 105 ? 'warning' : 'normal';
-      let u1_pp_desc = 'Normal Inclination';
-      if (u1_pp_angle < 105.0) {
-        u1_pp_desc = 'Retroclined';
-      } else if (u1_pp_angle > 115.0) {
-        u1_pp_desc = 'Proclined';
-      }
+
+      const clinical_assessments = payload.clinical_assessment || {};
 
       // Extract new 6 distances in mm and their severity levels
       const labial_crest = Number((payload.metrics?.labial_crest_mm ?? 1.2).toFixed(2));
@@ -274,14 +269,6 @@ export default function DashboardApp() {
       const palatal_apex = Number((payload.metrics?.palatal_apex_mm ?? 1.1).toFixed(2));
       const palatal_apex_severity = payload.metrics?.palatal_apex_severity ?? 'Monitor';
 
-      const bone_thickness_type = payload.metrics?.bone_thickness_type ?? 'Type 1 – Thick';
-      const bone_thickness_interpretation = payload.metrics?.bone_thickness_interpretation ?? 'Thick alveolar bone; Favorable bone support.';
-      const root_apex_position_type = payload.metrics?.root_apex_position_type ?? 'Midway';
-      const general_retraction_strategy = payload.metrics?.general_retraction_strategy ?? '';
-      const preferred_biomechanics = payload.metrics?.preferred_biomechanics ?? '';
-      const biomechanics_to_avoid = payload.metrics?.biomechanics_to_avoid ?? '';
-      const clinical_implication = payload.metrics?.clinical_implication ?? '';
-
       // CRITICAL: extract mm_per_pixel from _debug for zonal distance computation.
       // Per design rule: NEVER hardcode or guess the calibration value.
       // The backend now exposes it in payload._debug.mm_per_pixel.
@@ -293,7 +280,6 @@ export default function DashboardApp() {
       const normalizedResults = {
         u1_pp_angle,
         u1_pp_status,
-        u1_pp_desc,
         labial_crest,
         labial_crest_severity,
         labial_midroot,
@@ -306,13 +292,7 @@ export default function DashboardApp() {
         palatal_midroot_severity,
         palatal_apex,
         palatal_apex_severity,
-        bone_thickness_type,
-        bone_thickness_interpretation,
-        root_apex_position_type,
-        general_retraction_strategy,
-        preferred_biomechanics,
-        biomechanics_to_avoid,
-        clinical_implication,
+        clinical_assessments,
         metrics: payload.metrics || null,
         measurement_lines: payload.measurement_lines || null,
         global_min_lines: (payload.global_min_lines as GlobalMinLines) || null,  // 2-line global min sweep
@@ -333,106 +313,102 @@ export default function DashboardApp() {
       clearTimeout(timeoutId);
       setIsLoading(false);
     }
-  }, [file, cervicalOffsetMm]);
+  }, [file]);
+
+  // Dynamically pull active assessment based on current slider/mode
+  const activeAssessment = results ? (
+    measurementMode === 'standard'
+      ? results.clinical_assessments?.['standard']
+      : results.clinical_assessments?.[cervicalOffsetMm.toFixed(1)]
+  ) : null;
 
   return (
-    <div className="grid grid-cols-12 gap-8 h-full">
+    <div className="flex-1 flex overflow-hidden relative">
       {/* Left Panel - Image Viewer */}
-      <div className="col-span-12 lg:col-span-8 flex flex-col h-full overflow-hidden relative">
+      <div className="flex-[2] relative overflow-hidden flex flex-col p-4">
         <div className="bg-white dark:bg-slate-800/90 border border-slate-200 dark:border-slate-700/60 shadow-sm rounded-2xl p-3 flex-grow overflow-hidden flex flex-col relative">
-          
+
           {file ? (
             <div className="flex-1 min-h-0 relative flex items-center justify-center bg-slate-900 rounded-lg overflow-hidden group border border-slate-800/60">
-               {/* Filename badge */}
-               <div className="absolute top-4 left-4 z-20 bg-black/50 text-slate-100 px-4 py-1.5 rounded-full text-xs font-medium tracking-wide backdrop-blur-md pointer-events-none border border-white/10">
-                 {file.name}
-               </div>
+              {/* Filename badge */}
+              <div className="absolute top-4 left-4 z-20 bg-black/50 text-slate-100 px-4 py-1.5 rounded-full text-xs font-medium tracking-wide backdrop-blur-md pointer-events-none border border-white/10">
+                {file.name}
+              </div>
 
-               {/* Remove button */}
-               <button
-                  onClick={handleReset}
-                  className="absolute top-3 right-3 z-20 bg-black/40 hover:bg-red-500/80 text-white p-2 rounded-full transition duration-150"
-                  title="Remove Image"
-               >
-                 <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" /></svg>
-               </button>
+              {/* Remove button */}
+              <button
+                onClick={handleReset}
+                className="absolute top-3 right-3 z-20 bg-black/40 hover:bg-red-500/80 text-white p-2 rounded-full transition duration-150"
+                title="Remove Image"
+              >
+                <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" /></svg>
+              </button>
 
-               {/* After analysis: interactive Ceph Editor; before: plain preview */}
-               {results && !isLoading ? (
-                 <div className="absolute inset-0 z-10">
-                   <CephCanvasEditor
-                     imageFile={file}
-                     initialKeypoints={results.annotations?.keypoints}
-                     initialPolygons={results.annotations?.polygons}
-                     boneThickness={
-                       measurementMode === 'standard'
-                         ? adaptMeasurementLinesToBoneThickness(results.measurement_lines, results.metrics)
-                         : undefined  // suppress 3-line rulers in Min Distance mode
-                     }
-                     globalMinLines={
-                       measurementMode === 'zonal'
-                         ? (results.global_min_lines ?? undefined)
-                         : undefined
-                     }
-                   />
-                 </div>
-               ) : previewUrl ? (
-                 <img
-                   src={previewUrl}
-                   alt="Cephalogram preview"
-                   className="w-full h-full object-contain opacity-80"
-                 />
-               ) : null}
+              {/* After analysis: interactive Ceph Editor; before: plain preview */}
+              {results && !isLoading ? (
+                <div className="absolute inset-0 z-10">
+                  <CephCanvasEditor
+                    imageFile={file}
+                    initialKeypoints={results.annotations?.keypoints}
+                    initialPolygons={results.annotations?.polygons}
+                    boneThickness={
+                      measurementMode === 'standard'
+                        ? adaptMeasurementLinesToBoneThickness(results.measurement_lines, results.metrics)
+                        : undefined  // suppress 3-line rulers in Min Distance mode
+                    }
+                    globalMinLines={
+                      measurementMode === 'zonal' && results?.global_min_lines
+                        ? results.global_min_lines[cervicalOffsetMm.toFixed(1)]
+                        : undefined
+                    }
+                  />
+                </div>
+              ) : previewUrl ? (
+                <img
+                  src={previewUrl}
+                  alt="Cephalogram preview"
+                  className="w-full h-full object-contain opacity-80"
+                />
+              ) : null}
 
-               {isLoading && (
-                 <div className="absolute inset-0 bg-slate-900/60 flex items-center justify-center z-30 rounded-lg backdrop-blur-sm transition-all duration-200">
-                   <div className="flex flex-col items-center gap-4">
-                      <svg className="animate-spin h-10 w-10 text-singapodent-accent" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
-                        <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="3"></circle>
-                        <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
-                      </svg>
-                     <span className="text-white/90 text-xs font-semibold tracking-wider uppercase">Analyzing scan architecture...</span>
-                   </div>
-                 </div>
-               )}
+              {isLoading && (
+                <div className="absolute inset-0 bg-slate-900/60 flex items-center justify-center z-30 rounded-lg backdrop-blur-sm transition-all duration-200">
+                  <div className="flex flex-col items-center gap-4">
+                    <svg className="animate-spin h-10 w-10 text-singapodent-accent" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                      <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="3"></circle>
+                      <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                    </svg>
+                    <span className="text-white/90 text-xs font-semibold tracking-wider uppercase">Analyzing scan architecture...</span>
+                  </div>
+                </div>
+              )}
             </div>
           ) : (
             <UploadZone onFileSelect={handleFileSelect} />
           )}
 
         </div>
-        
-        {/* Analyze Button */}
-        <div className="shrink-0 mt-6 flex flex-col md:flex-row justify-between items-center gap-4">
-          <div className="text-red-500 font-medium text-sm flex items-center gap-2">
-            {error && (
-              <>
-                <svg className="w-4 h-4 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
-                </svg>
-                <span>{error}</span>
-              </>
-            )}
+
+        {/* Analyze Errors (Button is now Floating Action Button) */}
+        {error && (
+          <div className="shrink-0 mt-4 text-red-500 font-medium text-sm flex items-center gap-2">
+            <svg className="w-4 h-4 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+            </svg>
+            <span>{error}</span>
           </div>
-          <button
-            onClick={handleAnalyze}
-            disabled={!file || isLoading}
-            className="w-full md:w-auto py-3.5 px-10 text-sm font-semibold bg-singapodent-accent text-singapodent-primary dark:text-white rounded-full shadow-sm hover:brightness-105 transition-all duration-150 disabled:opacity-40 disabled:cursor-not-allowed focus:outline-none focus:ring-2 focus:ring-singapodent-accent/50"
-          >
-            {isLoading ? 'Processing Inference...' : 'Run AI Analysis'}
-          </button>
-        </div>
+        )}
 
       </div>
 
       {/* Right Panel - Metrics */}
-      <div className="col-span-12 lg:col-span-4 h-full pb-20 overflow-y-auto pr-2 custom-scrollbar">
+      <div className="w-96 md:w-[450px] overflow-y-auto p-4 pb-28 border-l border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 shrink-0 custom-scrollbar">
         <div className="flex flex-col gap-6 pt-2">
           <div className="pl-2 flex items-center justify-between">
             <h2 className="text-xl font-light tracking-tight text-slate-800 dark:text-white">Clinical Assessment</h2>
             <span className="text-xs font-medium text-slate-400 dark:text-slate-500 uppercase tracking-wider">Results</span>
           </div>
-          
+
           {!results && !isLoading && !error && (
             <div className="h-[280px] flex items-center justify-center border border-dashed border-slate-200 dark:border-slate-700/60 rounded-xl px-8 text-center text-slate-400 dark:text-slate-500">
               <div className="flex flex-col items-center gap-3">
@@ -441,7 +417,7 @@ export default function DashboardApp() {
               </div>
             </div>
           )}
-          
+
           {error && !isLoading && (
             <div className="h-64 flex items-center justify-center border border-red-200 dark:border-red-800/50 bg-red-50/80 dark:bg-red-900/10 rounded-xl px-8 text-center text-red-500">
               <div className="flex flex-col items-center gap-2">
@@ -455,29 +431,29 @@ export default function DashboardApp() {
 
           {isLoading && (
             <div className="flex flex-col gap-5 mt-2">
-               {[1,2,3].map(i => (
-                 <div key={i} className="h-[110px] bg-slate-100 dark:bg-slate-800/60 animate-pulse rounded-xl border border-slate-200/50 dark:border-slate-700/50 relative overflow-hidden">
-                   <div className="absolute inset-0 -translate-x-full bg-gradient-to-r from-transparent via-white/40 dark:via-white/5 to-transparent animate-[shimmer_2s_infinite]"></div>
-                   <div className="mt-8 ml-6 w-24 h-4 bg-slate-300 dark:bg-slate-600 rounded-full"></div>
-                   <div className="mt-4 ml-6 w-40 h-8 bg-slate-300 dark:bg-slate-600 rounded-full"></div>
-                 </div>
-               ))}
+              {[1, 2, 3].map(i => (
+                <div key={i} className="h-[110px] bg-slate-100 dark:bg-slate-800/60 animate-pulse rounded-xl border border-slate-200/50 dark:border-slate-700/50 relative overflow-hidden">
+                  <div className="absolute inset-0 -translate-x-full bg-gradient-to-r from-transparent via-white/40 dark:via-white/5 to-transparent animate-[shimmer_2s_infinite]"></div>
+                  <div className="mt-8 ml-6 w-24 h-4 bg-slate-300 dark:bg-slate-600 rounded-full"></div>
+                  <div className="mt-4 ml-6 w-40 h-8 bg-slate-300 dark:bg-slate-600 rounded-full"></div>
+                </div>
+              ))}
             </div>
           )}
 
           {results && !isLoading && (
             <div className="flex flex-col gap-5 animate-fade-in">
-              <MetricCard 
-                title="U1-PP Angle" 
-                value={results.u1_pp_angle} 
-                subtitle={`° (${results.u1_pp_desc})`} 
-                status={results.u1_pp_status} 
+              <MetricCard
+                title="U1-PP Angle"
+                value={results.u1_pp_angle}
+                subtitle={`° (${activeAssessment?.u1_pp_angle_class ?? 'Normal Inclination'})`}
+                status={results.u1_pp_status}
               />
-              <MetricCard 
-                title="Alveolar Bone Phenotype" 
-                value={results.bone_thickness_type} 
-                subtitle={getShortBoneTypeLabel(results.bone_thickness_type)} 
-                status={results.bone_thickness_type.includes('Type 1') ? 'normal' : results.bone_thickness_type.includes('Type 4') ? 'critical' : 'warning'} 
+              <MetricCard
+                title="Alveolar Bone Phenotype"
+                value={activeAssessment?.bone_thickness_type ?? 'Type 1 - Thick'}
+                subtitle={getShortBoneTypeLabel(activeAssessment?.bone_thickness_type ?? '')}
+                status={(activeAssessment?.bone_thickness_type ?? '').includes('Type 1') ? 'normal' : (activeAssessment?.bone_thickness_type ?? '').includes('Type 4') ? 'critical' : 'warning'}
               />
 
               {/* Distance Matrix Card */}
@@ -493,11 +469,10 @@ export default function DashboardApp() {
                   <button
                     id="toggle-standard"
                     onClick={() => setMeasurementMode('standard')}
-                    className={`flex-1 py-1.5 px-2 rounded-md text-[10px] font-bold uppercase tracking-wider transition-all duration-150 focus:outline-none ${
-                      measurementMode === 'standard'
+                    className={`flex-1 py-1.5 px-2 rounded-md text-[10px] font-bold uppercase tracking-wider transition-all duration-150 focus:outline-none ${measurementMode === 'standard'
                         ? 'bg-white dark:bg-slate-700 text-slate-800 dark:text-white shadow-sm'
                         : 'text-slate-400 dark:text-slate-500 hover:text-slate-600 dark:hover:text-slate-300'
-                    }`}
+                      }`}
                     title="Standard 3-line measurement method"
                   >
                     Standard Lines
@@ -506,11 +481,10 @@ export default function DashboardApp() {
                     id="toggle-zonal"
                     onClick={() => setMeasurementMode('zonal')}
                     disabled={!results?.global_min_lines}
-                    className={`flex-1 py-1.5 px-2 rounded-md text-[10px] font-bold uppercase tracking-wider transition-all duration-150 focus:outline-none disabled:opacity-30 disabled:cursor-not-allowed ${
-                      measurementMode === 'zonal'
+                    className={`flex-1 py-1.5 px-2 rounded-md text-[10px] font-bold uppercase tracking-wider transition-all duration-150 focus:outline-none disabled:opacity-30 disabled:cursor-not-allowed ${measurementMode === 'zonal'
                         ? 'bg-indigo-600 text-white shadow-sm'
                         : 'text-slate-400 dark:text-slate-500 hover:text-slate-600 dark:hover:text-slate-300'
-                    }`}
+                      }`}
                     title="Zonal minimum-distance sweep method"
                   >
                     ⚡ Zonal Min
@@ -539,13 +513,6 @@ export default function DashboardApp() {
                         <span className="text-[10px] font-bold uppercase text-slate-600 dark:text-slate-300 tracking-wide">
                           Cervical Offset: {cervicalOffsetMm.toFixed(1)} mm
                         </span>
-                        <button
-                          onClick={handleAnalyze}
-                          disabled={isLoading}
-                          className="px-3 py-1.5 text-[10px] font-bold uppercase tracking-wider bg-indigo-600 text-white rounded-md shadow-sm hover:bg-indigo-700 disabled:opacity-50 transition-colors focus:outline-none focus:ring-2 focus:ring-indigo-500/50"
-                        >
-                          {isLoading ? 'Calculating...' : 'Apply Offset'}
-                        </button>
                       </div>
                       <input
                         type="range"
@@ -563,11 +530,14 @@ export default function DashboardApp() {
                     </div>
                     {/* Labial Bottleneck */}
                     {(() => {
-                      const mm = results.global_min_lines.labial_mm as number;
+                      const currentZonalData = results.global_min_lines[cervicalOffsetMm.toFixed(1)];
+                      if (!currentZonalData) return null;
+
+                      const mm = currentZonalData.labial_mm as number;
                       const sev = mm < 0.5 ? 'critical' : mm < 1.0 ? 'warning' : 'normal';
                       const clr = sev === 'critical' ? 'border-red-500/40 bg-red-500/5 dark:bg-red-500/10'
                         : sev === 'warning' ? 'border-amber-500/40 bg-amber-500/5 dark:bg-amber-500/10'
-                        : 'border-orange-400/30 bg-orange-400/5 dark:bg-orange-400/10';
+                          : 'border-orange-400/30 bg-orange-400/5 dark:bg-orange-400/10';
                       const valClr = sev === 'critical' ? 'text-red-500' : sev === 'warning' ? 'text-amber-500' : 'text-orange-400';
                       return (
                         <div className={`p-4 rounded-xl border ${clr} flex flex-col gap-1`}>
@@ -587,11 +557,14 @@ export default function DashboardApp() {
 
                     {/* Palatal Bottleneck */}
                     {(() => {
-                      const mm = results.global_min_lines.palatal_mm as number;
+                      const currentZonalData = results.global_min_lines[cervicalOffsetMm.toFixed(1)];
+                      if (!currentZonalData) return null;
+
+                      const mm = currentZonalData.palatal_mm as number;
                       const sev = mm < 0.5 ? 'critical' : mm < 1.0 ? 'warning' : 'normal';
                       const clr = sev === 'critical' ? 'border-red-500/40 bg-red-500/5 dark:bg-red-500/10'
                         : sev === 'warning' ? 'border-amber-500/40 bg-amber-500/5 dark:bg-amber-500/10'
-                        : 'border-violet-400/30 bg-violet-400/5 dark:bg-violet-400/10';
+                          : 'border-violet-400/30 bg-violet-400/5 dark:bg-violet-400/10';
                       const valClr = sev === 'critical' ? 'text-red-500' : sev === 'warning' ? 'text-amber-500' : 'text-violet-400';
                       return (
                         <div className={`p-4 rounded-xl border ${clr} flex flex-col gap-1`}>
@@ -648,14 +621,14 @@ export default function DashboardApp() {
                   <div className="flex flex-col p-3 bg-slate-100/50 dark:bg-slate-900/40 border border-slate-200/50 dark:border-slate-700/50 rounded-lg">
                     <span className="text-[10px] font-bold text-slate-400 dark:text-slate-500 uppercase tracking-wider">Root Apex Position</span>
                     <span className="text-sm font-semibold text-slate-700 dark:text-slate-200 mt-0.5 flex items-center gap-1.5">
-                      {results.root_apex_position_type === 'Midway' ? '🟢 Midway (Centered)' : results.root_apex_position_type === 'Labial' ? '🔴 Labial Type' : '🟡 Palatal Type'}
+                      {activeAssessment?.root_apex_position_type === 'Midway' ? '🟢 Midway (Centered)' : activeAssessment?.root_apex_position_type === 'Labial' ? '🔴 Labial Type' : '🟡 Palatal Type'}
                     </span>
                   </div>
 
                   <div className="flex flex-col p-3 bg-slate-100/50 dark:bg-slate-900/40 border border-slate-200/50 dark:border-slate-700/50 rounded-lg">
                     <span className="text-[10px] font-bold text-slate-400 dark:text-slate-500 uppercase tracking-wider">General Retraction Strategy</span>
                     <span className="text-sm font-semibold text-slate-700 dark:text-slate-200 mt-0.5 leading-relaxed">
-                      {results.general_retraction_strategy}
+                      {activeAssessment?.general_retraction_strategy ?? ''}
                     </span>
                   </div>
 
@@ -664,7 +637,7 @@ export default function DashboardApp() {
                       Preferred Biomechanics
                     </h5>
                     <p className="text-xs text-slate-600 dark:text-slate-300 leading-relaxed font-normal">
-                      {results.preferred_biomechanics}
+                      {activeAssessment?.preferred_biomechanics ?? ''}
                     </p>
                   </div>
 
@@ -673,7 +646,7 @@ export default function DashboardApp() {
                       Biomechanics to Avoid
                     </h5>
                     <p className="text-xs text-slate-600 dark:text-slate-300 leading-relaxed font-normal">
-                      {results.biomechanics_to_avoid}
+                      {activeAssessment?.biomechanics_to_avoid ?? ''}
                     </p>
                   </div>
 
@@ -682,7 +655,7 @@ export default function DashboardApp() {
                       Clinical Implication
                     </h5>
                     <p className="text-xs text-slate-600 dark:text-slate-300 leading-relaxed font-normal italic">
-                      "{results.clinical_implication}"
+                      "{activeAssessment?.clinical_implication ?? ''}"
                     </p>
                   </div>
                 </div>
@@ -694,12 +667,23 @@ export default function DashboardApp() {
                   <span>⚠️ Clinical Disclaimer</span>
                 </div>
                 <p className="text-[10px] text-slate-500 dark:text-slate-400 leading-relaxed">
-                  {results.bone_thickness_interpretation} Estimation model based on 2D lateral cephalometric imaging and does not replace CBCT evaluation.
+                  {activeAssessment?.bone_thickness_interpretation ?? ''} Estimation model based on 2D lateral cephalometric imaging and does not replace CBCT evaluation.
                 </p>
               </div>
             </div>
           )}
         </div>
+      </div>
+
+      {/* Floating Action Button for Analysis */}
+      <div className="absolute bottom-6 right-6 z-50">
+        <button
+          onClick={handleAnalyze}
+          disabled={!file || isLoading}
+          className="py-3.5 px-10 text-sm font-semibold bg-singapodent-accent text-singapodent-primary dark:text-white rounded-full shadow-xl shadow-singapodent-accent/20 hover:shadow-2xl hover:brightness-110 transition-all duration-200 disabled:opacity-40 disabled:cursor-not-allowed focus:outline-none focus:ring-2 focus:ring-singapodent-accent/50"
+        >
+          {isLoading ? 'Processing...' : 'Run AI Analysis'}
+        </button>
       </div>
     </div>
   );

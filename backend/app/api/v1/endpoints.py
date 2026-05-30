@@ -8,7 +8,6 @@ router = APIRouter()
 async def analyze_endpoint(
     file: UploadFile = File(...),
     use_tta: bool = True,
-    cervical_offset_mm: float = Form(1.5),
 ):
     """
     Upload a cephalogram JPEG/PNG image for full Phase 2A (HRNet-W32)
@@ -28,7 +27,7 @@ async def analyze_endpoint(
 
     # Run the full production pipeline
     try:
-        result = analysis_service().analyze_image(contents, cervical_offset_mm=cervical_offset_mm)
+        result = analysis_service().analyze_image(contents)
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Analysis pipeline error: {e}")
 
