@@ -132,6 +132,7 @@ export default function DashboardApp() {
   const [error, setError] = useState<string | null>(null);
   // Measurement mode: 'standard' = existing 3-line method | 'zonal' = Zonal Min Distance
   const [measurementMode, setMeasurementMode] = useState<'standard' | 'zonal'>('standard');
+  const [cervicalOffsetMm, setCervicalOffsetMm] = useState<number>(1.5);
 
   // Optimized Object URL lifecycle management to prevent browser memory leaks
   useEffect(() => {
@@ -153,6 +154,7 @@ export default function DashboardApp() {
     setResults(null);
     setError(null);
     setMeasurementMode('standard');  // reset mode on new image
+    setCervicalOffsetMm(1.5);        // reset offset
   }, []);
 
   const handleReset = useCallback(() => {
@@ -160,6 +162,7 @@ export default function DashboardApp() {
     setResults(null);
     setError(null);
     setMeasurementMode('standard');  // reset mode on clear
+    setCervicalOffsetMm(1.5);        // reset offset
   }, []);
 
   const handleAnalyze = useCallback(async () => {
@@ -174,6 +177,7 @@ export default function DashboardApp() {
     try {
       const formData = new FormData();
       formData.append('file', file);
+      formData.append('cervical_offset_mm', cervicalOffsetMm.toString());
        
       const response = await fetch('http://localhost:8123/api/v1/analyze', {
         method: 'POST',
@@ -329,7 +333,7 @@ export default function DashboardApp() {
       clearTimeout(timeoutId);
       setIsLoading(false);
     }
-  }, [file]);
+  }, [file, cervicalOffsetMm]);
 
   return (
     <div className="grid grid-cols-12 gap-8 h-full">
@@ -529,6 +533,34 @@ export default function DashboardApp() {
                 {measurementMode === 'zonal' && results?.global_min_lines ? (
                   // ── Min Distance mode: 2 bold bottleneck cards ──────────────────
                   <div className="flex flex-col gap-3">
+                    {/* Cervical Offset Controls */}
+                    <div className="flex flex-col gap-2 mb-1 p-3 rounded-xl border border-indigo-500/20 bg-indigo-500/5 dark:bg-indigo-500/10 transition-all">
+                      <div className="flex justify-between items-center">
+                        <span className="text-[10px] font-bold uppercase text-slate-600 dark:text-slate-300 tracking-wide">
+                          Cervical Offset: {cervicalOffsetMm.toFixed(1)} mm
+                        </span>
+                        <button
+                          onClick={handleAnalyze}
+                          disabled={isLoading}
+                          className="px-3 py-1.5 text-[10px] font-bold uppercase tracking-wider bg-indigo-600 text-white rounded-md shadow-sm hover:bg-indigo-700 disabled:opacity-50 transition-colors focus:outline-none focus:ring-2 focus:ring-indigo-500/50"
+                        >
+                          {isLoading ? 'Calculating...' : 'Apply Offset'}
+                        </button>
+                      </div>
+                      <input
+                        type="range"
+                        min="0"
+                        max="5"
+                        step="0.1"
+                        value={cervicalOffsetMm}
+                        onChange={(e) => setCervicalOffsetMm(Number(e.target.value))}
+                        className="w-full h-1.5 bg-indigo-200 dark:bg-indigo-900 rounded-lg appearance-none cursor-pointer focus:outline-none"
+                      />
+                      <div className="flex justify-between text-[9px] text-slate-400 font-medium">
+                        <span>0 mm</span>
+                        <span>5 mm</span>
+                      </div>
+                    </div>
                     {/* Labial Bottleneck */}
                     {(() => {
                       const mm = results.global_min_lines.labial_mm as number;

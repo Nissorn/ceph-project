@@ -1,4 +1,4 @@
-from fastapi import APIRouter, UploadFile, File, HTTPException
+from fastapi import APIRouter, UploadFile, File, Form, HTTPException
 from app.models.schemas import AnalysisResponse
 from app.services.analysis_service import analysis_service
 
@@ -8,6 +8,7 @@ router = APIRouter()
 async def analyze_endpoint(
     file: UploadFile = File(...),
     use_tta: bool = True,
+    cervical_offset_mm: float = Form(1.5),
 ):
     """
     Upload a cephalogram JPEG/PNG image for full Phase 2A (HRNet-W32)
@@ -27,7 +28,7 @@ async def analyze_endpoint(
 
     # Run the full production pipeline
     try:
-        result = analysis_service().analyze_image(contents)
+        result = analysis_service().analyze_image(contents, cervical_offset_mm=cervical_offset_mm)
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Analysis pipeline error: {e}")
 

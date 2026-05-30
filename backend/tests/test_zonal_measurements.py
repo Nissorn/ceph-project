@@ -229,3 +229,32 @@ def test_global_minimum_does_not_mutate_inputs():
     np.testing.assert_array_equal(u1_perp, u1_perp_before, err_msg="u1_perp was mutated")
     for i, (m, s) in enumerate(zip(masks, sums_before)):
         assert m.sum() == s, f"masks[{i}] pixel sum changed from {s} to {m.sum()}"
+
+
+# ── Cycle 8 — Custom cervical offset ─────────────────────────────────────────
+
+def test_global_min_custom_cervical_offset():
+    """
+    Verify that passing a custom cervical_offset_mm doesn't break coordinate
+    finiteness and structure. It shifts the starting boundary (t_start), which
+    might or might not change the overall minimum depending on the mask shape,
+    but the return contract should remain identical.
+    """
+    masks = _make_masks()
+    tip, apex, u1_unit, u1_perp = _make_axis()
+
+    result_default = calculate_global_minimum(
+        tip, apex, u1_unit, u1_perp, masks, MM_PER_PIXEL
+    )
+    result_custom = calculate_global_minimum(
+        tip, apex, u1_unit, u1_perp, masks, MM_PER_PIXEL, cervical_offset_mm=3.0
+    )
+
+    # Output structure must remain exactly the same
+    assert set(result_custom.keys()) == EXPECTED_KEYS
+    for key in ("labial_line", "palatal_line"):
+        assert len(result_custom[key]) == 2
+        for pt in result_custom[key]:
+            assert len(pt) == 2
+            assert math.isfinite(pt[0]) and math.isfinite(pt[1])
+

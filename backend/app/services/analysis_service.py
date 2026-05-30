@@ -618,6 +618,7 @@ def calculate_global_minimum(
     masks: list,
     mm_per_pixel: float,
     n_sweep: int = 60,
+    cervical_offset_mm: float = 1.5,
 ) -> dict:
     """
     Global Minimum Distance Algorithm — sweeps the ENTIRE working root length.
@@ -669,8 +670,8 @@ def calculate_global_minimum(
             "palatal_mm":   0.0,
         }
 
-    # Sweep from 1.5 mm offset (cervical) to apex
-    cervical_offset_px = min(1.5 / mm_per_pixel, total_len * 0.15)
+    # Sweep from custom offset (cervical) to apex
+    cervical_offset_px = min(cervical_offset_mm / mm_per_pixel, total_len * 0.15)
     t_start = cervical_offset_px
     t_end   = total_len
 
@@ -893,7 +894,7 @@ class AnalysisService:
     # Main inference entry point                                        #
     # ------------------------------------------------------------------ #
 
-    def analyze_image(self, image_bytes: bytes, image_id: Optional[str] = None) -> dict:
+    def analyze_image(self, image_bytes: bytes, image_id: Optional[str] = None, cervical_offset_mm: float = 1.5) -> dict:
         """
         Process a raw upload (JPEG/PNG byte stream) through the full
         Phase 2A → Phase 2B → geometric snapping pipeline.
@@ -1103,6 +1104,7 @@ class AnalysisService:
             u1_perp=u1_perp,
             masks=corrected_masks,
             mm_per_pixel=mm_per_pixel,
+            cervical_offset_mm=cervical_offset_mm,
         )
 
         # ── Step 7.6: Alveolar Bone Thickness Classification (Zhang et al. 2021) ──
