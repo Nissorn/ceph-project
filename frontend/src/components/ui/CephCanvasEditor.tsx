@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react';
+import React, { useState, useEffect, useRef, useMemo, useCallback, forwardRef, useImperativeHandle } from 'react';
 import { Stage, Layer, Image as KonvaImage, Circle, Line, Text, Group } from 'react-konva';
 import type { KonvaEventObject } from 'konva/lib/Node';
 
@@ -57,6 +57,7 @@ interface Props {
   initialPolygons?: PolygonShape[];
   boneThickness?: Lines3Level;    // Standard mode — 3-level measurement lines
   globalMinLines?: GlobalMinLines; // Min Distance mode — 2 bold bottleneck lines
+  originalAnalysis?: any;          // Full payload for AI Reset
   onKeypointsChange?: (kps: Keypoint[]) => void;
   onPolygonsChange?: (polys: PolygonShape[]) => void;
   onRecalculate?: (results: any) => void;
@@ -132,20 +133,28 @@ function nearestEdgeInsert(
 
 // ── Component ─────────────────────────────────────────────────────────────────
 
-export default function CephCanvasEditor({
+const CephCanvasEditor = forwardRef(function CephCanvasEditor({
   imageFile,
   initialKeypoints,
   initialPolygons,
   boneThickness,
   globalMinLines,
+  originalAnalysis,
   onKeypointsChange,
   onPolygonsChange,
   onRecalculate,
-}: Props) {
+}: Props, ref) {
   const containerRef  = useRef<HTMLDivElement>(null);
   const stageRef      = useRef<any>(null);
   const scaleRef      = useRef(1);
   const importFileRef = useRef<HTMLInputElement>(null);
+
+  useImperativeHandle(ref, () => ({
+    getCanvasImage: () => {
+      if (!stageRef.current) return null;
+      return stageRef.current.toDataURL({ pixelRatio: 2, mimeType: 'image/jpeg', quality: 0.85 });
+    }
+  }));
 
   const [stageW, setStageW]               = useState(0);
   const [stageH, setStageH]               = useState(0);
@@ -187,6 +196,27 @@ export default function CephCanvasEditor({
     setPolygons(JSON.parse(JSON.stringify(prev.polys)));
     console.log('[CephEditor] Undo — restoring previous state.');
   }, [historyStack]);
+
+  // ── TARGET 2: Reset to AI Default ──────────────────────────────────────────────
+  const handleResetToAI = useCallback(() => {
+    if (!originalAnalysis || isFrozen) return;
+    console.log('[CephEditor] Reset to AI Default triggered.');
+    
+    // Double deep-clone the original analysis to prevent mutation by reference
+    const cleanReset = JSON.parse(JSON.stringify(originalAnalysis));
+    
+    // Restore state
+    setHistoryStack([]);
+    
+    if (onRecalculate) {
+      onRecalculate(cleanReset);
+    }
+    
+    // Locally reset keypoints and polygons from the mapped annotations
+    if (cleanReset.annotations?.keypoints) setKeypoints(cleanReset.annotations.keypoints);
+    if (cleanReset.annotations?.polygons) setPolygons(cleanReset.annotations.polygons);
+    
+  }, [originalAnalysis, isFrozen, onRecalculate]);
 
   // ── TARGET 1: Confirm & Save — freeze + POST to API ──────────────────────────
   const handleConfirmAndSave = useCallback(async () => {
@@ -1121,6 +1151,24 @@ export default function CephCanvasEditor({
 
                 <span className="text-white/25 select-none font-light">|</span>
 
+                {/* Reset to AI Default */}
+                {originalAnalysis && (
+                  <button
+                    onClick={handleResetToAI}
+                    disabled={isFrozen}
+                    title="Revert all manual edits back to original AI prediction"
+                    className={`flex items-center justify-center gap-1.5 px-3 py-1.5 rounded-lg text-[11px] font-bold transition-all whitespace-nowrap border ${
+                      isFrozen
+                        ? 'bg-white/10 border-white/20 text-white/40 cursor-not-allowed'
+                        : 'text-rose-400 border-rose-500/40 hover:bg-rose-500/20 hover:text-rose-300'
+                    }`}
+                  >
+                    Reset to AI
+                  </button>
+                )}
+
+                <span className="text-white/25 select-none font-light">|</span>
+
                 {/* Confirm & Save — high-contrast amber pill */}
                 <button
                   onClick={handleConfirmAndSave}
@@ -1197,4 +1245,6 @@ export default function CephCanvasEditor({
       </div>
     </div>
   );
-}
+});
+
+export default CephCanvasEditor;

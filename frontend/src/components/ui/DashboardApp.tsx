@@ -1,4 +1,5 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
+import { jsPDF } from 'jspdf';
 import UploadZone from './UploadZone';
 import MetricCard from './MetricCard';
 import CephCanvasEditor, { type Lines3Level, type GlobalMinLines } from './CephCanvasEditor';
@@ -134,6 +135,12 @@ export default function DashboardApp() {
   const [measurementMode, setMeasurementMode] = useState<'standard' | 'zonal'>('standard');
   const [cervicalOffsetMm, setCervicalOffsetMm] = useState<number>(1.5);
 
+  const [patientName, setPatientName] = useState('');
+  const [patientId, setPatientId] = useState('');
+  const [reportDate, setReportDate] = useState(() => new Date().toISOString().split('T')[0]);
+  const [originalAnalysis, setOriginalAnalysis] = useState<any>(null);
+  const cephCanvasRef = useRef<any>(null);
+
   // Optimized Object URL lifecycle management to prevent browser memory leaks
   useEffect(() => {
     if (!file) {
@@ -153,6 +160,7 @@ export default function DashboardApp() {
     setFile(selectedFile);
     setResults(null);
     setError(null);
+    setOriginalAnalysis(null);
     setMeasurementMode('standard');  // reset mode on new image
     setCervicalOffsetMm(1.5);        // reset offset
   }, []);
@@ -161,6 +169,7 @@ export default function DashboardApp() {
     setFile(null);
     setResults(null);
     setError(null);
+    setOriginalAnalysis(null);
     setMeasurementMode('standard');  // reset mode on clear
     setCervicalOffsetMm(1.5);        // reset offset
   }, []);
@@ -305,6 +314,7 @@ export default function DashboardApp() {
       const payload = data?.data || data || {};
       console.log("UNWRAPPED PAYLOAD:", payload);
 
+      setOriginalAnalysis(JSON.parse(JSON.stringify(payload)));
       processAndSetResults(payload);
     } catch (err: any) {
       console.error("Analysis failed:", err);
@@ -325,6 +335,117 @@ export default function DashboardApp() {
       ? results.clinical_assessments?.['standard']
       : results.clinical_assessments?.[cervicalOffsetMm.toFixed(1)]
   ) : null;
+
+  const exportPDFReport = useCallback(async () => {
+    if (!cephCanvasRef.current || !results) return;
+    
+    try {
+      const imageData = cephCanvasRef.current.getCanvasImage();
+      if (!imageData) throw new Error("Could not capture canvas image");
+      
+      const pdf = new jsPDF({
+        orientation: 'portrait',
+        unit: 'mm',
+        format: 'a4'
+      });
+      
+      const pageWidth = pdf.internal.pageSize.getWidth();
+      const pageHeight = pdf.internal.pageSize.getHeight();
+      
+      // Document Settings
+      pdf.setFont("helvetica");
+      let currentY = 20;
+      const margin = 20;
+      const contentWidth = pageWidth - (margin * 2);
+
+      // Logo/Header
+      pdf.setFontSize(20);
+      pdf.setFont("helvetica", "bold");
+      pdf.setTextColor(30, 58, 138); // Indigo-900
+      pdf.text("Advanced Cephalometric Analysis Report", margin, currentY);
+      
+      currentY += 15;
+
+      // Patient Metadata Section
+      pdf.setDrawColor(226, 232, 240); // Slate-200
+      pdf.line(margin, currentY, pageWidth - margin, currentY);
+      currentY += 8;
+      
+      pdf.setFontSize(11);
+      pdf.setTextColor(15, 23, 42); // Slate-900
+      pdf.setFont("helvetica", "bold");
+      pdf.text(`Patient Name:`, margin, currentY);
+      pdf.setFont("helvetica", "normal");
+      pdf.text(`${patientName || 'Anonymous'}`, margin + 35, currentY);
+      
+      pdf.setFont("helvetica", "bold");
+      pdf.text(`Patient ID:`, margin + 100, currentY);
+      pdf.setFont("helvetica", "normal");
+      pdf.text(`${patientId || 'N/A'}`, margin + 125, currentY);
+      
+      currentY += 8;
+      pdf.setFont("helvetica", "bold");
+      pdf.text(`Date:`, margin, currentY);
+      pdf.setFont("helvetica", "normal");
+      pdf.text(`${reportDate}`, margin + 35, currentY);
+      
+      currentY += 10;
+      pdf.line(margin, currentY, pageWidth - margin, currentY);
+      currentY += 15;
+
+      // X-Ray Image
+      const imgProps = pdf.getImageProperties(imageData);
+      const imgRatio = imgProps.height / imgProps.width;
+      
+      const renderImgWidth = contentWidth;
+      const renderImgHeight = contentWidth * imgRatio;
+      
+      pdf.addImage(imageData, 'JPEG', margin, currentY, renderImgWidth, renderImgHeight);
+      
+      currentY += renderImgHeight + 15;
+      
+      if (currentY > pageHeight - 50) {
+        pdf.addPage();
+        currentY = 20;
+      }
+
+      // Clinical Results Section
+      pdf.setFontSize(14);
+      pdf.setFont("helvetica", "bold");
+      pdf.text("Clinical Assessment", margin, currentY);
+      currentY += 10;
+      
+      pdf.setFontSize(11);
+      pdf.setFont("helvetica", "bold");
+      pdf.text("U1-PP Angle:", margin, currentY);
+      pdf.setFont("helvetica", "normal");
+      pdf.text(`${results.u1_pp_angle}° (${activeAssessment?.u1_pp_angle_class ?? 'Normal Inclination'})`, margin + 35, currentY);
+      
+      currentY += 8;
+      pdf.setFont("helvetica", "bold");
+      pdf.text("Phenotype:", margin, currentY);
+      pdf.setFont("helvetica", "normal");
+      pdf.text(`${activeAssessment?.bone_thickness_type ?? 'Type 1 - Thick'}`, margin + 35, currentY);
+      
+      currentY += 30;
+      
+      // Signature Line
+      if (currentY > pageHeight - 20) {
+          pdf.addPage();
+          currentY = 20;
+      }
+      
+      pdf.setDrawColor(15, 23, 42); // Slate-900
+      pdf.line(pageWidth - margin - 60, currentY, pageWidth - margin, currentY);
+      pdf.setFontSize(10);
+      pdf.text("(Dr. Signature)", pageWidth - margin - 45, currentY + 5);
+
+      pdf.save(`Ceph_Report_${patientId || 'Anonymous'}.pdf`);
+    } catch (err) {
+      console.error("PDF Generation failed:", err);
+      alert("Failed to generate PDF. Check console for details.");
+    }
+  }, [patientName, patientId, reportDate, results, activeAssessment]);
 
   return (
     <div className="flex-1 flex overflow-hidden relative">
@@ -353,7 +474,9 @@ export default function DashboardApp() {
               {results && !isLoading ? (
                 <div className="absolute inset-0 z-10">
                   <CephCanvasEditor
+                    ref={cephCanvasRef}
                     imageFile={file}
+                    originalAnalysis={originalAnalysis}
                     initialKeypoints={results.annotations?.keypoints}
                     initialPolygons={results.annotations?.polygons}
                     boneThickness={
@@ -409,6 +532,31 @@ export default function DashboardApp() {
 
       {/* Right Panel - Metrics */}
       <div className="w-full md:w-[450px] overflow-y-auto p-4 pb-28 border-l border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 shrink-0 custom-scrollbar">
+        
+        {/* PATIENT METADATA BANNER */}
+        <div className="bg-slate-50 dark:bg-slate-800/50 border border-slate-200 dark:border-slate-700/60 rounded-xl p-4 mb-6 shadow-sm">
+          <h3 className="text-xs font-bold uppercase text-slate-500 dark:text-slate-400 tracking-wider mb-3 flex items-center gap-2">
+            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" /></svg>
+            Patient Metadata
+          </h3>
+          <div className="flex flex-col gap-3">
+            <div className="flex gap-3">
+              <div className="flex-1">
+                <label className="block text-[10px] uppercase tracking-wider text-slate-400 dark:text-slate-500 mb-1">Patient Name</label>
+                <input type="text" value={patientName} onChange={e => setPatientName(e.target.value)} placeholder="e.g. John Doe" className="w-full bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-lg px-3 py-1.5 text-sm text-slate-800 dark:text-slate-200 focus:outline-none focus:border-indigo-500 transition-colors" />
+              </div>
+              <div className="w-1/3">
+                <label className="block text-[10px] uppercase tracking-wider text-slate-400 dark:text-slate-500 mb-1">Patient ID</label>
+                <input type="text" value={patientId} onChange={e => setPatientId(e.target.value)} placeholder="ID-12345" className="w-full bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-lg px-3 py-1.5 text-sm text-slate-800 dark:text-slate-200 focus:outline-none focus:border-indigo-500 transition-colors" />
+              </div>
+            </div>
+            <div>
+              <label className="block text-[10px] uppercase tracking-wider text-slate-400 dark:text-slate-500 mb-1">Date</label>
+              <input type="date" value={reportDate} onChange={e => setReportDate(e.target.value)} className="w-full bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-lg px-3 py-1.5 text-sm text-slate-800 dark:text-slate-200 focus:outline-none focus:border-indigo-500 transition-colors" />
+            </div>
+          </div>
+        </div>
+
         <div className="flex flex-col gap-6 pt-2">
           <div className="pl-2 flex items-center justify-between">
             <h2 className="text-xl font-light tracking-tight text-slate-800 dark:text-white">Clinical Assessment</h2>
@@ -680,6 +828,15 @@ export default function DashboardApp() {
                   {activeAssessment?.bone_thickness_interpretation ?? ''} Estimation model based on 2D lateral cephalometric imaging and does not replace CBCT evaluation.
                 </p>
               </div>
+
+              {/* Export PDF Button */}
+              <button
+                onClick={exportPDFReport}
+                className="w-full mt-2 py-3 px-4 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl shadow-md font-bold transition-all duration-200 flex items-center justify-center gap-2"
+              >
+                <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" /></svg>
+                Export PDF Report
+              </button>
             </div>
           )}
         </div>
