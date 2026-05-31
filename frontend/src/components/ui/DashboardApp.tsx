@@ -272,6 +272,97 @@ export default function DashboardApp() {
     setMeasurementMode('standard');  // always start on standard after a fresh analysis
   }, []);
 
+  const restoreSession = useCallback(async (sessionData: any) => {
+    if (!file) return;
+    setIsLoading(true);
+    setError(null);
+    try {
+      // Determine image dimensions
+      let width = sessionData.imageWidth || 0;
+      let height = sessionData.imageHeight || 0;
+      if (!width || !height) {
+        // Dynamically measure image dimensions if missing in session
+        const tempImg = new Image();
+        const objUrl = URL.createObjectURL(file);
+        try {
+          await new Promise<void>((resolve, reject) => {
+            tempImg.onload = () => resolve();
+            tempImg.onerror = () => reject(new Error("Failed to load image for dimensions"));
+            tempImg.src = objUrl;
+          });
+          width = tempImg.naturalWidth;
+          height = tempImg.naturalHeight;
+        } finally {
+          URL.revokeObjectURL(objUrl);
+        }
+      }
+
+      // Convert stored keypoints and polygons back to payload format for recalculation.
+      const payload = {
+        image_name: file.name,
+        image_width: width,
+        image_height: height,
+        keypoints: (sessionData.keypoints || []).map((kp: any) => ({
+          name: kp.name,
+          x: kp.x,
+          y: kp.y,
+          confidence: kp.confidence
+        })),
+        polygons: (sessionData.polygons || []).map((poly: any) => ({
+          name: poly.name,
+          points: poly.points
+        })),
+      };
+
+      const baseUrl = (import.meta.env && (import.meta.env as any).VITE_API_URL) || 'http://localhost:8123';
+      const res = await fetch(`${baseUrl}/api/v1/recalculate`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      });
+
+      if (!res.ok) throw new Error(`HTTP Recalculate Error: ${res.status}`);
+      const data = await res.json();
+      const responsePayload = data?.data || data || {};
+      
+      setOriginalAnalysis(JSON.parse(JSON.stringify(responsePayload)));
+      processAndSetResults(responsePayload);
+    } catch (err: any) {
+      console.error('[DashboardApp] Restore session failed:', err);
+      setError(err.message || 'Failed to recalculate restored session clinical metrics.');
+    } finally {
+      setIsLoading(false);
+    }
+  }, [file, processAndSetResults]);
+
+  useEffect(() => {
+    if (!file) return;
+    const sessionKey = `ceph_session_${file.name}`;
+    let saved = null;
+    try {
+      saved = localStorage.getItem(sessionKey);
+    } catch (e) {
+      console.warn('[DashboardApp] Failed to check session', e);
+    }
+
+    if (saved) {
+      try {
+        const parsed = JSON.parse(saved);
+        if (parsed && parsed.filename === file.name && Array.isArray(parsed.keypoints) && Array.isArray(parsed.polygons)) {
+          if (window.confirm("Found a saved session for this image. Restore it?")) {
+            restoreSession(parsed);
+          } else {
+            try {
+              localStorage.removeItem(sessionKey);
+            } catch (err) {}
+          }
+        }
+      } catch (e) {
+        console.error('[DashboardApp] Failed to parse saved session', e);
+      }
+    }
+  }, [file, restoreSession]);
+
   const handleAnalyze = useCallback(async () => {
     if (!file) return;
     setIsLoading(true);
@@ -461,6 +552,24 @@ export default function DashboardApp() {
               </div>
 
               {/* Remove button */}
+              <div className="absolute top-3 right-14 z-20">
+                <button
+                  onClick={() => {
+                    try {
+                      const sessionKey = file?.name ? `ceph_session_${file.name}` : 'ceph_session_default';
+                      localStorage.removeItem(sessionKey);
+                      localStorage.removeItem('ceph_session');
+                    } catch (e) {
+                      console.warn('[DashboardApp] Failed to clear session', e);
+                    }
+                    alert('Session cleared from browser memory.');
+                  }}
+                  className="bg-black/40 hover:bg-rose-500/80 text-white px-3 py-1.5 rounded-full text-xs font-medium transition duration-150 focus:outline-none focus:ring-2 focus:ring-white/50 border border-white/10"
+                  title="Clear Session"
+                >
+                  Clear Session
+                </button>
+              </div>
               <button
                 onClick={handleReset}
                 className="absolute top-3 right-3 z-20 bg-black/40 hover:bg-red-500/80 text-white p-2 rounded-full transition duration-150 focus:outline-none focus:ring-2 focus:ring-white/50"

@@ -5,9 +5,13 @@ export default function ThemeToggle() {
   // DOM state on mount; localStorage overrides only if user previously set a preference.
   const [isDark, setIsDark] = useState(() => {
     if (typeof window !== 'undefined') {
-      const saved = localStorage.getItem('theme');
-      if (saved === 'dark')  return true;
-      if (saved === 'light') return false;
+      try {
+        const saved = localStorage.getItem('theme');
+        if (saved === 'dark')  return true;
+        if (saved === 'light') return false;
+      } catch (e) {
+        console.warn('[ThemeToggle] Failed to read theme from localStorage', e);
+      }
     }
     return false; // light by default
   });
@@ -21,10 +25,18 @@ export default function ThemeToggle() {
     const next = !isDark;
     if (next) {
       document.documentElement.classList.add('dark');
-      localStorage.setItem('theme', 'dark');
+      try {
+        localStorage.setItem('theme', 'dark');
+      } catch (e) {
+        console.warn('[ThemeToggle] Failed to save theme to localStorage', e);
+      }
     } else {
       document.documentElement.classList.remove('dark');
-      localStorage.setItem('theme', 'light');
+      try {
+        localStorage.setItem('theme', 'light');
+      } catch (e) {
+        console.warn('[ThemeToggle] Failed to save theme to localStorage', e);
+      }
     }
     setIsDark(next);
   };

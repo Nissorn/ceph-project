@@ -163,9 +163,10 @@ const CephCanvasEditor = forwardRef(function CephCanvasEditor({
   const [polygons, setPolygons]           = useState<PolygonShape[]>([]);
   const [selectedId, setSelectedId]       = useState<string | null>(null);
   const [stageScale, setStageScale]       = useState(1);
-  const [showLandmarks, setShowLandmarks] = useState(true);
-  const [showPolygons, setShowPolygons]   = useState(true);
-  const [showMeasurementLines, setShowMeasurementLines] = useState(true);
+  const [visibleLayers, setVisibleLayers] = useState({ tooth: true, labial: true, palatal: true, lines: true, landmarks: true });
+  const [brightness, setBrightness]       = useState(100);
+  const [contrast, setContrast]           = useState(100);
+  const [invert, setInvert]               = useState(false);
   const [pointSize, setPointSize]         = useState(4);
   const [debugInfo, setDebugInfo]         = useState({ x: 0, y: 0, imageX: 0, imageY: 0 });
   const [isDebugMode, setIsDebugMode]     = useState(false);
@@ -226,11 +227,11 @@ const CephCanvasEditor = forwardRef(function CephCanvasEditor({
 
     const baseUrl = (import.meta.env && (import.meta.env as any).VITE_API_URL) || 'http://localhost:8123';
     const payload = {
-      image_name: imageFile.name,
+      image_name: imageFile?.name || 'unknown_image',
       image_width: img ? img.width : 0,
       image_height: img ? img.height : 0,
-      keypoints: keypoints.map(kp => ({ name: kp.name, x: kp.x, y: kp.y, confidence: kp.confidence })),
-      polygons: polygons.map(poly => ({ name: poly.name, points: poly.points })),
+      keypoints: (keypoints || []).map(kp => ({ name: kp?.name, x: kp?.x, y: kp?.y, confidence: kp?.confidence })),
+      polygons: (polygons || []).map(poly => ({ name: poly?.name, points: poly?.points })),
     };
 
     try {
@@ -263,16 +264,40 @@ const CephCanvasEditor = forwardRef(function CephCanvasEditor({
     return () => el.removeEventListener('wheel', block);
   }, [isFrozen]);
 
+  // ── TARGET 3: Auto-Save / Session Recovery ───────────────────────────────────
+  useEffect(() => {
+    if ((keypoints || []).length === 0 && (polygons || []).length === 0) return;
+    const timer = setTimeout(() => {
+      try {
+        const sessionKey = imageFile?.name ? `ceph_session_${imageFile.name}` : 'ceph_session_default';
+        localStorage.setItem(sessionKey, JSON.stringify({
+          filename: imageFile?.name || 'unknown_image',
+          keypoints: keypoints || [],
+          polygons: polygons || []
+        }));
+      } catch (e) { console.warn('[CephEditor] Failed to auto-save', e); }
+    }, 1000);
+    return () => clearTimeout(timer);
+  }, [keypoints, polygons, imageFile?.name]);
+
   // ── Sync stale-proof ref with state ──────────────────────────────────────────
   useEffect(() => { scaleRef.current = stageScale; }, [stageScale]);
 
   // ── Load image ───────────────────────────────────────────────────────────────
   useEffect(() => {
-    const url = URL.createObjectURL(imageFile);
-    const el  = new window.Image();
-    el.onload = () => setImg(el);
-    el.src    = url;
-    return () => URL.revokeObjectURL(url);
+    if (!imageFile) return;
+    let url: string | null = null;
+    try {
+      url = URL.createObjectURL(imageFile);
+      const el  = new window.Image();
+      el.onload = () => setImg(el);
+      el.src    = url;
+    } catch (e) {
+      console.error('[CephEditor] Failed to create object URL for imageFile', e);
+    }
+    return () => {
+      if (url) URL.revokeObjectURL(url);
+    };
   }, [imageFile]);
 
   // ── Observe container size ───────────────────────────────────────────────────
@@ -427,7 +452,9 @@ const CephCanvasEditor = forwardRef(function CephCanvasEditor({
       let minGlobalDist = Infinity;
 
       polygons.forEach(p => {
-        if (!showPolygons) return;
+        if (p.name === 'Upper_incisor' && !visibleLayers.tooth) return;
+        if (p.name === 'Labial_bone' && !visibleLayers.labial) return;
+        if (p.name === 'Palatal_bone' && !visibleLayers.palatal) return;
         const edge = nearestEdgeInsert(p.points, ix, iy);
         if (edge.dist < minGlobalDist) {
           minGlobalDist = edge.dist;
@@ -448,7 +475,7 @@ const CephCanvasEditor = forwardRef(function CephCanvasEditor({
         setSelectedId(bestPolyId);
       }
     }
-  }, [polygons, showPolygons, fitScale, stageScale, pushHistory, toImage, isFrozen]);
+  }, [polygons, visibleLayers, fitScale, stageScale, pushHistory, toImage, isFrozen]);
 
   const setCursor = useCallback((e: KonvaEventObject<MouseEvent>, cur: string) => {
     e.target.getStage()?.container().style.setProperty('cursor', cur);
@@ -534,9 +561,31 @@ const CephCanvasEditor = forwardRef(function CephCanvasEditor({
       {/* ── Canvas container (fills all space, anchors floating toolbar) ──── */}
       <div ref={containerRef} className="relative w-full h-full overflow-hidden bg-slate-950">
 
+        {/* ── PACS Controls ────────────────────────────────────────────────────────── */}
+        {img && (
+          <div className="absolute top-16 left-4 z-50 flex flex-col gap-3 bg-slate-900/90 backdrop-blur-md p-4 rounded-xl border border-white/10 shadow-2xl pointer-events-auto">
+            <div className="text-[10px] uppercase font-bold tracking-widest text-slate-400">Image Adjustments</div>
+            <label className="flex items-center gap-3 text-xs text-slate-200">
+              <span className="w-16 font-medium">Brightness</span>
+              <input type="range" min="50" max="200" value={brightness} onChange={e => setBrightness(Number(e.target.value))} className="w-24 accent-amber-400 cursor-pointer" />
+              <span className="w-8 tabular-nums font-mono text-[10px]">{brightness}%</span>
+            </label>
+            <label className="flex items-center gap-3 text-xs text-slate-200">
+              <span className="w-16 font-medium">Contrast</span>
+              <input type="range" min="50" max="200" value={contrast} onChange={e => setContrast(Number(e.target.value))} className="w-24 accent-cyan-400 cursor-pointer" />
+              <span className="w-8 tabular-nums font-mono text-[10px]">{contrast}%</span>
+            </label>
+            <label className="flex items-center gap-2 text-xs text-slate-200 cursor-pointer mt-1 font-medium">
+              <input type="checkbox" checked={invert} onChange={e => setInvert(e.target.checked)} className="accent-rose-400 w-3.5 h-3.5 rounded cursor-pointer" />
+              Invert Colors
+            </label>
+          </div>
+        )}
+
         {img && stageW > 0 && stageH > 0 && (
           <Stage
             ref={stageRef}
+            style={{ filter: `brightness(${brightness}%) contrast(${contrast}%) ${invert ? 'invert(100%)' : ''}` }}
             width={stageW}
             height={stageH}
             scaleX={stageScale}
@@ -561,42 +610,51 @@ const CephCanvasEditor = forwardRef(function CephCanvasEditor({
               />
 
               {/* ── Polygons (Shapes Only) ──────────────────────────────────────────────── */}
-              {showPolygons && [...polygons].sort((a, b) => a.name === 'Upper_incisor' ? 1 : b.name === 'Upper_incisor' ? -1 : 0).map((poly) => {
-                const stagePts: number[] = [];
-                for (let i = 0; i < poly.points.length; i += 2) {
-                  const [cx, cy] = toContent(poly.points[i], poly.points[i+1]);
-                  stagePts.push(cx, cy);
-                }
-                const isSel = selectedId === poly.id;
+              {Array.isArray(polygons) && [...polygons]
+                .sort((a, b) => (a?.name === 'Upper_incisor' ? 1 : b?.name === 'Upper_incisor' ? -1 : 0))
+                .map((poly) => {
+                  if (!poly) return null;
+                  if (poly.name === 'Upper_incisor' && !visibleLayers?.tooth) return null;
+                  if (poly.name === 'Labial_bone' && !visibleLayers?.labial) return null;
+                  if (poly.name === 'Palatal_bone' && !visibleLayers?.palatal) return null;
+                  const stagePts: number[] = [];
+                  if (Array.isArray(poly.points)) {
+                    for (let i = 0; i < poly.points.length; i += 2) {
+                      const [cx, cy] = toContent(poly.points[i], poly.points[i+1]);
+                      stagePts.push(cx, cy);
+                    }
+                  }
+                  const isSel = selectedId === poly.id;
 
-                return (
-                  <Group key={`shape-${poly.id}`}>
-                    <Line
-                      points={stagePts}
-                      closed
-                      fill={poly.fill}
-                      stroke={isSel ? '#ffffff' : poly.stroke}
-                      strokeWidth={(isSel ? 2 : 1.5) / stageScale}
-                      hitStrokeWidth={10 / stageScale}
-                      listening={false}
-                    />
-                    {/* Polygon label — shadow replaces stroke for legibility */}
-                    <Text
-                      x={stagePts[0] ?? 0}
-                      y={(stagePts[1] ?? 0) - (16 / stageScale)}
-                      text={poly.name}
-                      fontSize={11 / stageScale} fontStyle="bold"
-                      fill="white"
-                      shadowColor="black" shadowBlur={4} shadowOpacity={1}
-                      shadowOffsetX={1} shadowOffsetY={1}
-                      listening={false}
-                    />
-                  </Group>
-                );
-              })}
+                  return (
+                    <Group key={`shape-${poly.id}`}>
+                      <Line
+                        points={stagePts}
+                        closed
+                        fill={poly.fill}
+                        stroke={isSel ? '#ffffff' : poly.stroke}
+                        strokeWidth={(isSel ? 2 : 1.5) / stageScale}
+                        hitStrokeWidth={10 / stageScale}
+                        listening={false}
+                      />
+                      {/* Polygon label — shadow replaces stroke for legibility */}
+                      <Text
+                        x={stagePts[0] ?? 0}
+                        y={(stagePts[1] ?? 0) - (16 / stageScale)}
+                        text={poly.name}
+                        fontSize={11 / stageScale} fontStyle="bold"
+                        fill="white"
+                        shadowColor="black" shadowBlur={4} shadowOpacity={1}
+                        shadowOffsetX={1} shadowOffsetY={1}
+                        listening={false}
+                      />
+                    </Group>
+                  );
+                })}
 
               {/* ── Keypoints ─────────────────────────────────────────────── */}
-              {showLandmarks && keypoints.map((kp) => {
+              {visibleLayers?.landmarks && Array.isArray(keypoints) && keypoints.map((kp) => {
+                if (!kp) return null;
                 const [kx, ky] = toContent(kp.x, kp.y);
                 const isSel = selectedId === kp.id;
                 const conf  = kp.confidence;
@@ -680,7 +738,7 @@ const CephCanvasEditor = forwardRef(function CephCanvasEditor({
               })}
 
               {/* ── Plan B 3-level measurement lines (bone thickness) ─────────── */}
-              {showMeasurementLines && (() => {
+              {visibleLayers.lines && (() => {
                 // Resolve boneThickness: prefer live API data, fall back to a visible
                 // mock so the UI is never blank — makes debugging much easier.
                 const live = boneThickness;
@@ -878,7 +936,7 @@ const CephCanvasEditor = forwardRef(function CephCanvasEditor({
                    Rendered ONLY when globalMinLines prop is present.
                    The standard boneThickness mock is suppressed in this mode
                    so exactly 2 lines are visible (labial + palatal minimum). */}
-              {showMeasurementLines && globalMinLines && (() => {
+              {visibleLayers.lines && globalMinLines && (() => {
                 const LABIAL_COL  = '#fb923c';   // Warm orange  — labial bottleneck
                 const PALATAL_COL = '#a78bfa';   // Violet       — palatal bottleneck
                 const SW  = 2.5 / stageScale;    // Thicker than standard lines for emphasis
@@ -958,12 +1016,17 @@ const CephCanvasEditor = forwardRef(function CephCanvasEditor({
               })()}
 
               {/* ── Polygons (Vertex Handles Only, Rendered Last/Top) ────────────── */}
-              {showPolygons && polygons.map((poly) => {
+              {Array.isArray(polygons) && polygons.map((poly) => {
+                if (!poly) return null;
+                if (poly.name === 'Upper_incisor' && !visibleLayers?.tooth) return null;
+                if (poly.name === 'Labial_bone' && !visibleLayers?.labial) return null;
+                if (poly.name === 'Palatal_bone' && !visibleLayers?.palatal) return null;
                 const isSel = selectedId === poly.id;
-                const nv    = poly.points.length / 2;
+                const nv    = Array.isArray(poly.points) ? poly.points.length / 2 : 0;
                 return (
                   <Group key={`handles-${poly.id}`}>
                     {Array.from({ length: nv }, (_, vi) => {
+                      if (!poly.points || poly.points[vi*2] === undefined || poly.points[vi*2+1] === undefined) return null;
                       const [vx, vy] = toContent(poly.points[vi*2], poly.points[vi*2+1]);
                       return (
                         <Circle
@@ -1072,39 +1135,35 @@ const CephCanvasEditor = forwardRef(function CephCanvasEditor({
                 <span className="text-white/40">del pt</span>
               </div>
 
-              {/* Main functional control bar */}
-              <div className="w-full md:w-auto bg-black/90 backdrop-blur-md text-white px-5 py-2.5 rounded-xl md:rounded-full border border-white/15 flex flex-wrap md:flex-nowrap gap-x-4 gap-y-2 text-xs items-center justify-center shadow-2xl pointer-events-auto">
-
-                {/* Visibility toggles */}
+              {/* Main functional control bar — Split into two rows to prevent overflow */}
+              {/* Row 1 (Top): Visibility Toggles */}
+              <div className="bg-black/90 backdrop-blur-md text-white px-5 py-2.5 rounded-full border border-white/15 flex items-center justify-center gap-4 text-xs shadow-2xl pointer-events-auto">
                 <div className="flex items-center gap-3">
                   <label className="flex items-center gap-1.5 cursor-pointer select-none whitespace-nowrap text-white font-medium">
-                    <input
-                      type="checkbox" checked={showLandmarks}
-                      onChange={(e) => setShowLandmarks(e.target.checked)}
-                      className="accent-amber-400 w-3.5 h-3.5 cursor-pointer rounded"
-                    />
-                    <span className="text-white/90">Landmarks</span>
+                    <input type="checkbox" checked={visibleLayers.landmarks} onChange={(e) => setVisibleLayers(v => ({...v, landmarks: e.target.checked}))} className="accent-amber-400 w-3.5 h-3.5 cursor-pointer rounded" />
+                    <span className="text-white/90">👁️ Points</span>
                   </label>
                   <label className="flex items-center gap-1.5 cursor-pointer select-none whitespace-nowrap text-white font-medium">
-                    <input
-                      type="checkbox" checked={showPolygons}
-                      onChange={(e) => setShowPolygons(e.target.checked)}
-                      className="accent-cyan-400 w-3.5 h-3.5 cursor-pointer rounded"
-                    />
-                    <span className="text-white/90">Polygons</span>
+                    <input type="checkbox" checked={visibleLayers.tooth} onChange={(e) => setVisibleLayers(v => ({...v, tooth: e.target.checked}))} className="accent-cyan-400 w-3.5 h-3.5 cursor-pointer rounded" />
+                    <span className="text-white/90">🦷 Tooth</span>
                   </label>
                   <label className="flex items-center gap-1.5 cursor-pointer select-none whitespace-nowrap text-white font-medium">
-                    <input
-                      type="checkbox" checked={showMeasurementLines}
-                      onChange={(e) => setShowMeasurementLines(e.target.checked)}
-                      className="accent-pink-400 w-3.5 h-3.5 cursor-pointer rounded"
-                    />
-                    <span className="text-white/90">Lines</span>
+                    <input type="checkbox" checked={visibleLayers.labial} onChange={(e) => setVisibleLayers(v => ({...v, labial: e.target.checked}))} className="accent-pink-400 w-3.5 h-3.5 cursor-pointer rounded" />
+                    <span className="text-white/90">👄 Labial</span>
+                  </label>
+                  <label className="flex items-center gap-1.5 cursor-pointer select-none whitespace-nowrap text-white font-medium">
+                    <input type="checkbox" checked={visibleLayers.palatal} onChange={(e) => setVisibleLayers(v => ({...v, palatal: e.target.checked}))} className="accent-emerald-400 w-3.5 h-3.5 cursor-pointer rounded" />
+                    <span className="text-white/90">👅 Palatal</span>
+                  </label>
+                  <label className="flex items-center gap-1.5 cursor-pointer select-none whitespace-nowrap text-white font-medium">
+                    <input type="checkbox" checked={visibleLayers.lines} onChange={(e) => setVisibleLayers(v => ({...v, lines: e.target.checked}))} className="accent-indigo-400 w-3.5 h-3.5 cursor-pointer rounded" />
+                    <span className="text-white/90">📏 Lines</span>
                   </label>
                 </div>
+              </div>
 
-                <span className="text-white/25 select-none font-light">|</span>
-
+              {/* Row 2 (Bottom): Action tools */}
+              <div className="bg-black/90 backdrop-blur-md text-white px-5 py-2.5 rounded-full border border-white/15 flex items-center justify-center gap-3.5 text-xs shadow-2xl pointer-events-auto">
                 {/* Point size slider */}
                 <label className="flex items-center gap-2 select-none whitespace-nowrap">
                   <span className="text-white/60 text-[11px] hidden sm:inline font-medium">Size</span>
@@ -1117,10 +1176,11 @@ const CephCanvasEditor = forwardRef(function CephCanvasEditor({
                   <span className="tabular-nums font-mono w-5 text-right text-white/80">{pointSize}</span>
                 </label>
 
+                <span className="text-white/25 select-none font-light">|</span>
+
                 {/* Zoom indicator */}
                 {stageScale > 1 && (
                   <>
-                    <span className="text-white/25 select-none font-light">|</span>
                     <button
                       onClick={resetZoom}
                       className="flex items-center justify-center gap-0.5 text-white/70 hover:text-white transition-colors whitespace-nowrap w-12 text-center tabular-nums font-mono bg-white/10 hover:bg-white/20 px-2 py-1 rounded text-[11px] font-medium border border-white/10"
@@ -1128,10 +1188,9 @@ const CephCanvasEditor = forwardRef(function CephCanvasEditor({
                     >
                       {Math.round(stageScale * 100)}%
                     </button>
+                    <span className="text-white/25 select-none font-light">|</span>
                   </>
                 )}
-
-                <span className="text-white/25 select-none font-light">|</span>
 
                 {/* Undo */}
                 <button
@@ -1149,25 +1208,24 @@ const CephCanvasEditor = forwardRef(function CephCanvasEditor({
 
                 <span className="text-white/25 select-none font-light">|</span>
 
-                <span className="text-white/25 select-none font-light">|</span>
-
                 {/* Reset to AI Default */}
                 {originalAnalysis && (
-                  <button
-                    onClick={handleResetToAI}
-                    disabled={isFrozen}
-                    title="Revert all manual edits back to original AI prediction"
-                    className={`flex items-center justify-center gap-1.5 px-3 py-1.5 rounded-lg text-[11px] font-bold transition-all whitespace-nowrap border ${
-                      isFrozen
-                        ? 'bg-white/10 border-white/20 text-white/40 cursor-not-allowed'
-                        : 'text-rose-400 border-rose-500/40 hover:bg-rose-500/20 hover:text-rose-300'
-                    }`}
-                  >
-                    Reset to AI
-                  </button>
+                  <>
+                    <button
+                      onClick={handleResetToAI}
+                      disabled={isFrozen}
+                      title="Revert all manual edits back to original AI prediction"
+                      className={`flex items-center justify-center gap-1.5 px-3 py-1.5 rounded-lg text-[11px] font-bold transition-all whitespace-nowrap border ${
+                        isFrozen
+                          ? 'bg-white/10 border-white/20 text-white/40 cursor-not-allowed'
+                          : 'text-rose-400 border-rose-500/40 hover:bg-rose-500/20 hover:text-rose-300'
+                      }`}
+                    >
+                      Reset to AI
+                    </button>
+                    <span className="text-white/25 select-none font-light">|</span>
+                  </>
                 )}
-
-                <span className="text-white/25 select-none font-light">|</span>
 
                 {/* Confirm & Save — high-contrast amber pill */}
                 <button
@@ -1218,7 +1276,6 @@ const CephCanvasEditor = forwardRef(function CephCanvasEditor({
                 >
                   <span className="text-xs font-bold leading-none">✕</span>
                 </button>
-
               </div>
             </div>
           ) : (
