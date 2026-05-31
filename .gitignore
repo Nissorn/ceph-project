@@ -13,6 +13,11 @@ data/processed/
 *.json
 *.csv
 
+# Exceptions for allowed report figures
+!reports/figures/pipeline_stage_diagram.png
+!reports/figures/architecture_diagram.png
+!reports/figures/temperature_sensitivity.png
+
 # Model weights
 checkpoints/
 *.pth

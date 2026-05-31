@@ -915,6 +915,9 @@ export default function DashboardApp() {
                         <span>0 mm</span>
                         <span>5 mm</span>
                       </div>
+                      <div className="text-red-500 dark:text-red-400 text-xs italic mt-1 leading-snug">
+                        ⚠️ This modifies the biomechanical classification manually. Must review with clinical supervisor.
+                      </div>
                     </div>
                     {/* Labial Bottleneck */}
                     {(() => {
