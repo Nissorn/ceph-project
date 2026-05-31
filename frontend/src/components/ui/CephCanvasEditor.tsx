@@ -299,30 +299,46 @@ export default function CephCanvasEditor({
     e.evt.preventDefault();
     const stage = stageRef.current;
     if (!stage) return;
-    const oldScale = scaleRef.current;
-    const pointer  = stage.getPointerPosition()!;
-    const mouseAt  = {
-      x: (pointer.x - (stage.x() as number)) / oldScale,
-      y: (pointer.y - (stage.y() as number)) / oldScale,
+
+    const scaleBy = 1.05; // Smooth increment
+    const oldScale = stage.scaleX();
+    const pointer = stage.getPointerPosition();
+    if (!pointer) return;
+
+    // 1. Calculate the position of the pointer relative to the un-scaled stage
+    const mousePointTo = {
+      x: (pointer.x - stage.x()) / oldScale,
+      y: (pointer.y - stage.y()) / oldScale,
     };
-    const direction = e.evt.deltaY < 0 ? 1 : -1;
-    const newScale  = Math.max(1.0, Math.min(50, oldScale * Math.pow(1.08, direction)));
+
+    // 2. Determine new scale based on wheel direction
+    const direction = e.evt.deltaY > 0 ? -1 : 1; 
+    let newScale = direction > 0 ? oldScale * scaleBy : oldScale / scaleBy;
+    newScale = Math.max(0.1, Math.min(newScale, 50)); // Allow deep zoom
+
+    // 3. Calculate new position to keep the pointer exactly over the same image pixel
+    const newPos = {
+      x: pointer.x - mousePointTo.x * newScale,
+      y: pointer.y - mousePointTo.y * newScale,
+    };
+
+    // 4. Update scale and position on the stage instance and update React state
+    stage.scale({ x: newScale, y: newScale });
+    stage.position(newPos);
     scaleRef.current = newScale;
     setStageScale(newScale);
-    if (newScale <= 1.0) {
-      stage.position({ x: 0, y: 0 });
-    } else {
-      stage.position({
-        x: pointer.x - mouseAt.x * newScale,
-        y: pointer.y - mouseAt.y * newScale,
-      });
-    }
+    stage.batchDraw();
   }, []);
 
   const resetZoom = useCallback(() => {
     scaleRef.current = 1;
     setStageScale(1);
-    stageRef.current?.position({ x: 0, y: 0 });
+    const stage = stageRef.current;
+    if (stage) {
+      stage.scale({ x: 1, y: 1 });
+      stage.position({ x: 0, y: 0 });
+      stage.batchDraw();
+    }
   }, []);
 
   // ── Shape event handlers ──────────────────────────────────────────────────────
