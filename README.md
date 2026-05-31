@@ -17,10 +17,13 @@ cd ceph-project
 Model weights are **not** included in the repo (excluded via `.gitignore` — too large for git).
 
 **Option A — From project owner:**
-Ask for the shared Google Drive link, download `outputs/checkpoints/` into this directory:
-```
-outputs/checkpoints/fold1_best.pth … fold5_best.pth
-```
+Obtain the following files and place them in the correct directories:
+1. **Landmark Model Weights (HRNet-W32)**:
+   - Place `fold1_best.pth` into: `data/processed/checkpoints/fold1_best.pth`
+2. **Segmentation Model Weights (DeepLabV3Plus)**:
+   - Place the folder `tversky_deepLabV3plus_resnet34_20250529_20260529_094221` (containing `best_model.pt`) into: `backend/models/`
+3. **Calibration Data**:
+   - Ensure `calibration.csv` is present at: `data/calibration.csv`
 
 **Option B — Train from scratch:**
 ```bash
@@ -30,21 +33,46 @@ python src/phase2/train.py --config config.yaml --folds 5
 ### 3. Build & run with Docker
 
 ```bash
-docker compose up --build
+docker compose up --build -d
 ```
 
 | Service | URL | Purpose |
 |---------|-----|---------|
-| Web (Astro SPA) | http://localhost:4321 | Upload X-ray, view landmarks |
-| API (FastAPI) | http://localhost:8000/api/v1/analyze | Inference endpoint |
-| Health | http://localhost:8000/api/v1/health | `{"status":"ok"}` |
+| Web (Astro SPA) | http://localhost:4321 | Upload X-ray, view landmarks & edit |
+| API (FastAPI) | http://localhost:8123/api/v1/health | Inference health check (`{"status":"success"}`) |
 
 **Frontend only (no backend):**
 ```bash
 docker compose up --build web
 ```
 
-### 4. Without Docker
+---
+
+## Deploying & Sharing on Other Devices
+
+If you want to share this project with other developers or run it on a separate machine/device:
+
+### 1. Bundle and Copy
+Send the git repository codebase along with the model weights and data described below (which are gitignored):
+- `data/processed/checkpoints/fold1_best.pth`
+- `backend/models/tversky_deepLabV3plus_resnet34_20250529_20260529_094221/best_model.pt`
+- `data/calibration.csv`
+
+Ensure they are placed in the exact directory tree shown in **Section 2 (Obtain model weights)**.
+
+### 2. Sharing within a Local Network (Multi-device access)
+By default, the frontend is built targeting the API on `localhost:8123`. If you want other devices on your Wi-Fi/local network (like an iPad or another laptop) to access the application, you must pass the hosting machine's local IP address during build time:
+
+1. Identify your local IP address (e.g. `192.168.1.150`).
+2. Build and launch the containers with `VITE_API_URL` pointing to your IP:
+   ```bash
+   VITE_API_URL=http://192.168.1.150:8123/api/v1 docker compose up --build -d
+   ```
+3. Other devices can now navigate to `http://192.168.1.150:4321` to use the application.
+
+---
+
+### 4. Without Docker (Local Development)
 
 **Backend:**
 ```bash
