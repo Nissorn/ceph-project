@@ -62,10 +62,13 @@ interface Props {
   onRecalculate?: (results: any) => void;
 }
 
+// ── Geometry Math Utility ──────────────────────────────────────────────────
+// Removed auto-snap math utility as per UX simplification.
+
 // ── Medical imaging colour palette ───────────────────────────────────────────
 
 const POLY_PALETTE = [
-  { fill: 'rgba(6, 182, 212, 0.15)',  stroke: 'rgba(6, 182, 212, 0.9)'  },  // Cyan Accent    — Upper_incisor
+  { fill: 'rgba(6, 182, 212, 0.6)',  stroke: 'rgba(6, 182, 212, 0.9)'  },  // Cyan Accent    — Upper_incisor (Translucent for Z-Index manual tucking)
   { fill: 'rgba(236, 72, 153, 0.15)', stroke: 'rgba(236, 72, 153, 0.9)' }, // Pink/Magenta — Labial_bone
   { fill: 'rgba(16, 185, 129, 0.15)', stroke: 'rgba(16, 185, 129, 0.9)' }, // Emerald Green  — Palatal_bone
 ];
@@ -111,7 +114,7 @@ function fracsToImg(fracs: number[], w: number, h: number): number[] {
 
 function nearestEdgeInsert(
   pts: number[], cx: number, cy: number
-): { insertAt: number; px: number; py: number } {
+): { insertAt: number; px: number; py: number; dist: number } {
   const n = pts.length / 2;
   let best = { insertAt: 2, px: 0, py: 0, dist: Infinity };
   for (let i = 0; i < n; i++) {
@@ -166,7 +169,10 @@ export default function CephCanvasEditor({
   // Push current keypoint+polygon snapshot onto history
   const pushHistory = useCallback(() => {
     setHistoryStack(prev => {
-      const next = [...prev, { kps: [...keypoints], polys: [...polygons] }];
+      const next = [...prev, { 
+        kps: JSON.parse(JSON.stringify(keypoints)), 
+        polys: JSON.parse(JSON.stringify(polygons)) 
+      }];
       // cap at 20 entries to avoid unbounded memory growth
       return next.length > 20 ? next.slice(next.length - 20) : next;
     });
@@ -177,8 +183,8 @@ export default function CephCanvasEditor({
     if (historyStack.length === 0) return;
     const prev = historyStack[historyStack.length - 1];
     setHistoryStack(s => s.slice(0, -1));
-    setKeypoints(prev.kps);
-    setPolygons(prev.polys);
+    setKeypoints(JSON.parse(JSON.stringify(prev.kps)));
+    setPolygons(JSON.parse(JSON.stringify(prev.polys)));
     console.log('[CephEditor] Undo — restoring previous state.');
   }, [historyStack]);
 
@@ -300,7 +306,7 @@ export default function CephCanvasEditor({
       y: (pointer.y - (stage.y() as number)) / oldScale,
     };
     const direction = e.evt.deltaY < 0 ? 1 : -1;
-    const newScale  = Math.max(1.0, Math.min(12, oldScale * Math.pow(1.08, direction)));
+    const newScale  = Math.max(1.0, Math.min(50, oldScale * Math.pow(1.08, direction)));
     scaleRef.current = newScale;
     setStageScale(newScale);
     if (newScale <= 1.0) {
@@ -323,15 +329,13 @@ export default function CephCanvasEditor({
 
   const moveKp = useCallback((id: string, e: KonvaEventObject<DragEvent>) => {
     if (isFrozen) { e.target.stopDrag(); return; }
-    pushHistory();
     const [ix, iy] = toImage(e.target.x(), e.target.y());
     console.log(`[CephEditor] onDragEnd "${id}" → image x:${ix.toFixed(2)}, y:${iy.toFixed(2)}`);
     setKeypoints(prev => prev.map(k => k.id === id ? { ...k, x: ix, y: iy } : k));
-  }, [isFrozen, pushHistory, toImage]);
+  }, [isFrozen, toImage]);
 
   const moveVertex = useCallback((polyId: string, vi: number, e: KonvaEventObject<DragEvent>) => {
     if (isFrozen) { e.target.stopDrag(); return; }
-    pushHistory();
     const [ix, iy] = toImage(e.target.x(), e.target.y());
     setPolygons(prev => prev.map(p => {
       if (p.id !== polyId) return p;
@@ -339,36 +343,66 @@ export default function CephCanvasEditor({
       pts[vi*2] = ix; pts[vi*2+1] = iy;
       return { ...p, points: pts };
     }));
-  }, [isFrozen, pushHistory, toImage]);
+  }, [isFrozen, toImage]);
 
   const deleteVertex = useCallback((polyId: string, vi: number, e: KonvaEventObject<MouseEvent>) => {
     e.cancelBubble = true;
+    pushHistory();
     setPolygons(prev => prev.map(p => {
       if (p.id !== polyId || p.points.length <= 6) return p;
       const pts = [...p.points];
       pts.splice(vi*2, 2);
       return { ...p, points: pts };
     }));
-  }, []);
+  }, [pushHistory]);
 
-  const addEdgePoint = useCallback((polyId: string, e: KonvaEventObject<MouseEvent>) => {
-    if (!e.evt.shiftKey) return;
-    e.cancelBubble = true;
-    const stage = stageRef.current;
-    if (!stage) return;
-    const raw      = stage.getPointerPosition()!;
-    const sz       = scaleRef.current;
-    const cx       = (raw.x - (stage.x() as number)) / sz;
-    const cy       = (raw.y - (stage.y() as number)) / sz;
-    const [ix, iy] = toImage(cx, cy);
-    setPolygons(prev => prev.map(p => {
-      if (p.id !== polyId) return p;
-      const { insertAt, px, py } = nearestEdgeInsert(p.points, ix, iy);
-      const pts = [...p.points];
-      pts.splice(insertAt, 0, px, py);
-      return { ...p, points: pts };
-    }));
-  }, [toImage]);
+  const handleStageClick = useCallback((e: KonvaEventObject<MouseEvent>) => {
+    if (e.target === e.target.getStage()) {
+      if (!e.evt.shiftKey) {
+        setSelectedId(null);
+        return;
+      }
+    }
+
+    if (isFrozen) return;
+
+    if (e.evt.shiftKey) {
+      const stage = stageRef.current;
+      if (!stage) return;
+      
+      const raw      = stage.getPointerPosition()!;
+      const sz       = scaleRef.current;
+      const cx       = (raw.x - (stage.x() as number)) / sz;
+      const cy       = (raw.y - (stage.y() as number)) / sz;
+      const [ix, iy] = toImage(cx, cy);
+
+      let bestPolyId: string | null = null;
+      let bestEdge: { insertAt: number; px: number; py: number; dist: number } | null = null;
+      let minGlobalDist = Infinity;
+
+      polygons.forEach(p => {
+        if (!showPolygons) return;
+        const edge = nearestEdgeInsert(p.points, ix, iy);
+        if (edge.dist < minGlobalDist) {
+          minGlobalDist = edge.dist;
+          bestPolyId = p.id;
+          bestEdge = edge;
+        }
+      });
+
+      const screenDist = minGlobalDist * fitScale * stageScale;
+      if (bestPolyId && bestEdge && screenDist < 20) {
+        pushHistory();
+        setPolygons(prev => prev.map(p => {
+          if (p.id !== bestPolyId) return p;
+          const pts = [...p.points];
+          pts.splice(bestEdge!.insertAt, 0, bestEdge!.px, bestEdge!.py);
+          return { ...p, points: pts };
+        }));
+        setSelectedId(bestPolyId);
+      }
+    }
+  }, [polygons, showPolygons, fitScale, stageScale, pushHistory, toImage, isFrozen]);
 
   const setCursor = useCallback((e: KonvaEventObject<MouseEvent>, cur: string) => {
     e.target.getStage()?.container().style.setProperty('cursor', cur);
@@ -463,7 +497,7 @@ export default function CephCanvasEditor({
             scaleY={stageScale}
             draggable
             onWheel={handleWheel}
-            onClick={(e) => { if (e.target === e.target.getStage()) setSelectedId(null); }}
+            onClick={handleStageClick}
             onMouseEnter={(e) => setCursor(e, 'grab')}
             onMouseLeave={(e) => setCursor(e, 'default')}
             onMouseDown={(e) => { if (e.target === e.target.getStage()) setCursor(e, 'grabbing'); }}
@@ -480,18 +514,17 @@ export default function CephCanvasEditor({
                 listening={false}
               />
 
-              {/* ── Polygons ──────────────────────────────────────────────── */}
-              {showPolygons && polygons.map((poly) => {
+              {/* ── Polygons (Shapes Only) ──────────────────────────────────────────────── */}
+              {showPolygons && [...polygons].sort((a, b) => a.name === 'Upper_incisor' ? 1 : b.name === 'Upper_incisor' ? -1 : 0).map((poly) => {
                 const stagePts: number[] = [];
                 for (let i = 0; i < poly.points.length; i += 2) {
                   const [cx, cy] = toContent(poly.points[i], poly.points[i+1]);
                   stagePts.push(cx, cy);
                 }
                 const isSel = selectedId === poly.id;
-                const nv    = poly.points.length / 2;
 
                 return (
-                  <Group key={poly.id}>
+                  <Group key={`shape-${poly.id}`}>
                     <Line
                       points={stagePts}
                       closed
@@ -499,9 +532,7 @@ export default function CephCanvasEditor({
                       stroke={isSel ? '#ffffff' : poly.stroke}
                       strokeWidth={(isSel ? 2 : 1.5) / stageScale}
                       hitStrokeWidth={10 / stageScale}
-                      onClick={(e) => { setSelectedId(poly.id); addEdgePoint(poly.id, e); }}
-                      onMouseEnter={(e) => setCursor(e, 'pointer')}
-                      onMouseLeave={(e) => setCursor(e, 'grab')}
+                      listening={false}
                     />
                     {/* Polygon label — shadow replaces stroke for legibility */}
                     <Text
@@ -514,31 +545,6 @@ export default function CephCanvasEditor({
                       shadowOffsetX={1} shadowOffsetY={1}
                       listening={false}
                     />
-                    {/* Vertex handles */}
-                    {Array.from({ length: nv }, (_, vi) => {
-                      const [vx, vy] = toContent(poly.points[vi*2], poly.points[vi*2+1]);
-                      return (
-                        <Circle
-                          key={vi}
-                          x={vx} y={vy}
-                          radius={pointSize / stageScale}
-                          hitStrokeWidth={20 / stageScale}
-                          fill={isSel ? '#ffffff' : poly.stroke}
-                          stroke={poly.stroke}
-                          strokeWidth={1 / stageScale}
-                          draggable
-                          onDragMove={(e) => moveVertex(poly.id, vi, e)}
-                          onDblClick={(e) => deleteVertex(poly.id, vi, e)}
-                          onClick={(e) => {
-                            setSelectedId(poly.id);
-                            if (e.evt.altKey) deleteVertex(poly.id, vi, e);
-                            e.cancelBubble = true;
-                          }}
-                          onMouseEnter={(e) => setCursor(e, 'crosshair')}
-                          onMouseLeave={(e) => setCursor(e, 'grab')}
-                        />
-                      );
-                    })}
                   </Group>
                 );
               })}
@@ -604,6 +610,7 @@ export default function CephCanvasEditor({
                       stroke={ringColor}
                       strokeWidth={1.5 / stageScale}
                       draggable
+                      onDragStart={pushHistory}
                       onDragEnd={(e) => moveKp(kp.id, e)}
                       onClick={() => setSelectedId(kp.id)}
                       onMouseEnter={(e) => setCursor(e, 'move')}
@@ -903,6 +910,50 @@ export default function CephCanvasEditor({
                   );
                 });
               })()}
+
+              {/* ── Polygons (Vertex Handles Only, Rendered Last/Top) ────────────── */}
+              {showPolygons && polygons.map((poly) => {
+                const isSel = selectedId === poly.id;
+                const nv    = poly.points.length / 2;
+                return (
+                  <Group key={`handles-${poly.id}`}>
+                    {Array.from({ length: nv }, (_, vi) => {
+                      const [vx, vy] = toContent(poly.points[vi*2], poly.points[vi*2+1]);
+                      return (
+                        <Circle
+                          key={vi}
+                          x={vx} y={vy}
+                          radius={pointSize / stageScale}
+                          hitStrokeWidth={40 / stageScale}
+                          fill={isSel ? '#ffffff' : poly.stroke}
+                          stroke={poly.stroke}
+                          strokeWidth={1 / stageScale}
+                          draggable
+                          onDragStart={(e) => {
+                            e.target.moveToTop();
+                            pushHistory();
+                          }}
+                          onDragMove={(e) => moveVertex(poly.id, vi, e)}
+                          onDblClick={(e) => { pushHistory(); deleteVertex(poly.id, vi, e); }}
+                          onClick={(e) => {
+                            setSelectedId(poly.id);
+                            if (e.evt.altKey) { pushHistory(); deleteVertex(poly.id, vi, e); }
+                            e.cancelBubble = true;
+                          }}
+                          onMouseEnter={(e) => {
+                            setCursor(e, 'pointer');
+                            e.target.scale({ x: 1.5, y: 1.5 });
+                          }}
+                          onMouseLeave={(e) => {
+                            setCursor(e, 'default');
+                            e.target.scale({ x: 1, y: 1 });
+                          }}
+                        />
+                      );
+                    })}
+                  </Group>
+                );
+              })}
             </Layer>
           </Stage>
         )}
@@ -1049,6 +1100,8 @@ export default function CephCanvasEditor({
                 >
                   ↩ Undo
                 </button>
+
+                <span className="text-white/25 select-none font-light">|</span>
 
                 <span className="text-white/25 select-none font-light">|</span>
 

@@ -1273,6 +1273,13 @@ class AnalysisService:
             if name == 'Labial_bone': poly_labial = poly_points
             if name == 'Palatal_bone': poly_palatal = poly_points
 
+        # ── BOOLEAN SUBTRACTION PARADIGM ──
+        # Ensure bone masks do not overlap the tooth
+        tooth_mask = corrected_masks[0]
+        tooth_inv = cv2.bitwise_not(tooth_mask)
+        corrected_masks[1] = cv2.bitwise_and(corrected_masks[1], tooth_inv)
+        corrected_masks[2] = cv2.bitwise_and(corrected_masks[2], tooth_inv)
+
         # Diagnostics are empty for manual recalculation
         snapping_diag = {name: {"dx": 0.0, "dy": 0.0, "dist_px": 0.0, "note": "manual_override"} for name in KEYPOINT_NAMES}
         mask_diag = {"note": "manual_override"}
