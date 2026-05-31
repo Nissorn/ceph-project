@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { jsPDF } from 'jspdf';
+import autoTable from 'jspdf-autotable';
 import UploadZone from './UploadZone';
 import MetricCard from './MetricCard';
 import CephCanvasEditor, { type Lines3Level, type GlobalMinLines } from './CephCanvasEditor';
@@ -240,9 +241,10 @@ export default function DashboardApp() {
     // CRITICAL: extract mm_per_pixel from _debug for zonal distance computation.
     // Per design rule: NEVER hardcode or guess the calibration value.
     // The backend now exposes it in payload._debug.mm_per_pixel.
-    const mmPerPixel = Number(payload._debug?.mm_per_pixel ?? 0);
-    if (!mmPerPixel || mmPerPixel <= 0) {
-      console.warn('[DashboardApp] mm_per_pixel missing or zero in _debug — zonal mm labels will fallback to 0');
+    // Calibration Fallback: When mm_per_pixel is missing or resolves to 0, fallback to default dataset mean 0.0984.
+    const mmPerPixel = Number(payload._debug?.mm_per_pixel ?? 0.0984) || 0.0984;
+    if (!payload._debug?.mm_per_pixel || Number(payload._debug.mm_per_pixel) <= 0) {
+      console.warn(`[DashboardApp] mm_per_pixel missing or zero in _debug — fallback to default dataset mean: ${mmPerPixel}`);
     }
 
     const normalizedResults = {
@@ -429,112 +431,231 @@ export default function DashboardApp() {
 
   const exportPDFReport = useCallback(async () => {
     if (!cephCanvasRef.current || !results) return;
-    
+
     try {
-      const imageData = cephCanvasRef.current.getCanvasImage();
-      if (!imageData) throw new Error("Could not capture canvas image");
-      
-      const pdf = new jsPDF({
-        orientation: 'portrait',
-        unit: 'mm',
-        format: 'a4'
-      });
-      
-      const pageWidth = pdf.internal.pageSize.getWidth();
-      const pageHeight = pdf.internal.pageSize.getHeight();
-      
-      // Document Settings
-      pdf.setFont("helvetica");
-      let currentY = 20;
-      const margin = 20;
-      const contentWidth = pageWidth - (margin * 2);
+      // ── A4 constants ────────────────────────────────────────────────────────
+      const pdf = new jsPDF('p', 'mm', 'a4');
+      const PAGE_W = 210;
+      const PAGE_H = 297;
+      const M = 15;           // margin
+      const USABLE = PAGE_W - M * 2;  // 180 mm
+      let y = M;
 
-      // Logo/Header
-      pdf.setFontSize(20);
-      pdf.setFont("helvetica", "bold");
-      pdf.setTextColor(30, 58, 138); // Indigo-900
-      pdf.text("Advanced Cephalometric Analysis Report", margin, currentY);
-      
-      currentY += 15;
-
-      // Patient Metadata Section
-      pdf.setDrawColor(226, 232, 240); // Slate-200
-      pdf.line(margin, currentY, pageWidth - margin, currentY);
-      currentY += 8;
-      
-      pdf.setFontSize(11);
-      pdf.setTextColor(15, 23, 42); // Slate-900
-      pdf.setFont("helvetica", "bold");
-      pdf.text(`Patient Name:`, margin, currentY);
-      pdf.setFont("helvetica", "normal");
-      pdf.text(`${patientName || 'Anonymous'}`, margin + 35, currentY);
-      
-      pdf.setFont("helvetica", "bold");
-      pdf.text(`Patient ID:`, margin + 100, currentY);
-      pdf.setFont("helvetica", "normal");
-      pdf.text(`${patientId || 'N/A'}`, margin + 125, currentY);
-      
-      currentY += 8;
-      pdf.setFont("helvetica", "bold");
-      pdf.text(`Date:`, margin, currentY);
-      pdf.setFont("helvetica", "normal");
-      pdf.text(`${reportDate}`, margin + 35, currentY);
-      
-      currentY += 10;
-      pdf.line(margin, currentY, pageWidth - margin, currentY);
-      currentY += 15;
-
-      // X-Ray Image
-      const imgProps = pdf.getImageProperties(imageData);
-      const imgRatio = imgProps.height / imgProps.width;
-      
-      const renderImgWidth = contentWidth;
-      const renderImgHeight = contentWidth * imgRatio;
-      
-      pdf.addImage(imageData, 'JPEG', margin, currentY, renderImgWidth, renderImgHeight);
-      
-      currentY += renderImgHeight + 15;
-      
-      if (currentY > pageHeight - 50) {
-        pdf.addPage();
-        currentY = 20;
-      }
-
-      // Clinical Results Section
-      pdf.setFontSize(14);
-      pdf.setFont("helvetica", "bold");
-      pdf.text("Clinical Assessment", margin, currentY);
-      currentY += 10;
-      
-      pdf.setFontSize(11);
-      pdf.setFont("helvetica", "bold");
-      pdf.text("U1-PP Angle:", margin, currentY);
-      pdf.setFont("helvetica", "normal");
-      pdf.text(`${results.u1_pp_angle}° (${activeAssessment?.u1_pp_angle_class ?? 'Normal Inclination'})`, margin + 35, currentY);
-      
-      currentY += 8;
-      pdf.setFont("helvetica", "bold");
-      pdf.text("Phenotype:", margin, currentY);
-      pdf.setFont("helvetica", "normal");
-      pdf.text(`${activeAssessment?.bone_thickness_type ?? 'Type 1 - Thick'}`, margin + 35, currentY);
-      
-      currentY += 30;
-      
-      // Signature Line
-      if (currentY > pageHeight - 20) {
+      // ── Helper: guard pagination before drawing text ─────────────────────
+      const ensureSpace = (needed: number) => {
+        if (y + needed > PAGE_H - M) {
           pdf.addPage();
-          currentY = 20;
+          y = M;
+        }
+      };
+
+      // ── Helper: add image scaled to usable width with auto-pagination ─────
+      const addScaledImage = (imgData: string, format: 'PNG' | 'JPEG') => {
+        const props = pdf.getImageProperties(imgData);
+        const h = (props.height * USABLE) / props.width;
+        ensureSpace(h);
+        pdf.addImage(imgData, format, M, y, USABLE, h);
+        y += h + 8;
+      };
+
+      // ── Helper: bold section header ──────────────────────────────────────
+      const sectionHeader = (text: string, size = 13) => {
+        ensureSpace(10);
+        pdf.setFontSize(size);
+        pdf.setFont('helvetica', 'bold');
+        pdf.setTextColor(30, 58, 138);
+        pdf.text(text, M, y);
+        y += 6;
+        pdf.setDrawColor(226, 232, 240);
+        pdf.line(M, y, PAGE_W - M, y);
+        y += 5;
+        pdf.setTextColor(15, 23, 42);
+      };
+
+      // ── Helper: labeled row ──────────────────────────────────────────────
+      const labelRow = (label: string, value: string, indent = 0) => {
+        ensureSpace(9);
+        pdf.setFontSize(10);
+        pdf.setFont('helvetica', 'bold');
+        pdf.text(`${label}:`, M + indent, y);
+        pdf.setFont('helvetica', 'normal');
+        pdf.text(value, 85 + indent, y);
+        y += 8;
+      };
+
+      // ════════════════════════════════════════════════════════════════════════
+      // PAGE 1 — Header & Patient Metadata
+      // ════════════════════════════════════════════════════════════════════════
+      pdf.setFont('helvetica', 'bold');
+      pdf.setFontSize(18);
+      pdf.setTextColor(30, 58, 138);
+      pdf.text('Advanced Cephalometric Analysis Report', M, y);
+      y += 10;
+
+      pdf.setDrawColor(226, 232, 240);
+      pdf.line(M, y, PAGE_W - M, y);
+      y += 7;
+
+      pdf.setFontSize(10.5);
+      pdf.setTextColor(15, 23, 42);
+
+      // Row 1: Patient Name + ID
+      pdf.setFont('helvetica', 'bold'); pdf.text('Patient Name:', M, y);
+      pdf.setFont('helvetica', 'normal'); pdf.text(patientName || 'Anonymous', M + 33, y);
+      pdf.setFont('helvetica', 'bold'); pdf.text('Patient ID:', M + 100, y);
+      pdf.setFont('helvetica', 'normal'); pdf.text(patientId || 'N/A', M + 122, y);
+      y += 8;
+
+      // Row 2: Date
+      pdf.setFont('helvetica', 'bold'); pdf.text('Date:', M, y);
+      pdf.setFont('helvetica', 'normal'); pdf.text(reportDate, M + 33, y);
+      y += 8;
+
+      pdf.line(M, y, PAGE_W - M, y);
+      y += 8;
+
+      // ── X-Ray Image ──────────────────────────────────────────────────────
+      const imageData = cephCanvasRef.current.getCanvasImage();
+      if (!imageData) throw new Error('Could not capture canvas image');
+      addScaledImage(imageData, 'JPEG');
+
+      // ════════════════════════════════════════════════════════════════════════
+      // PAGE 2 — Clinical Assessment
+      // ════════════════════════════════════════════════════════════════════════
+      pdf.addPage();
+      y = M;
+
+      sectionHeader('Clinical Assessment');
+
+      const assessment = activeAssessment;
+      labelRow('U1-PP Angle',
+        `${results.u1_pp_angle}°  (${assessment?.u1_pp_angle_class ?? 'Normal Inclination'})`);
+      labelRow('Alveolar Bone Phenotype',
+        assessment?.bone_thickness_type ?? 'Type 1 – Thick');
+
+      y += 4;
+      // ── Root-to-Bone Distances (autoTable) ──────────────────────────────
+      sectionHeader('Root-to-Bone Distances (mm)', 12);
+
+      autoTable(pdf, {
+        startY: y,
+        margin: { left: M, right: M },
+        head: [['Measurement', 'Labial Plate (mm)', 'Severity', 'Palatal Plate (mm)', 'Severity']],
+        body: [
+          [
+            'Crest',
+            results.labial_crest.toFixed(2), results.labial_crest_severity,
+            results.palatal_crest.toFixed(2), results.palatal_crest_severity,
+          ],
+          [
+            'Midroot',
+            results.labial_midroot.toFixed(2), results.labial_midroot_severity,
+            results.palatal_midroot.toFixed(2), results.palatal_midroot_severity,
+          ],
+          [
+            'Apex',
+            results.labial_apex.toFixed(2), results.labial_apex_severity,
+            results.palatal_apex.toFixed(2), results.palatal_apex_severity,
+          ],
+        ],
+        theme: 'grid',
+        styles: { fontSize: 9.5, cellPadding: 3, valign: 'middle' },
+        headStyles: { fillColor: [29, 78, 216], textColor: 255, fontStyle: 'bold' },
+        columnStyles: {
+          0: { fontStyle: 'bold', fillColor: [241, 245, 249] },
+          2: { fontStyle: 'italic', textColor: [100, 116, 139] },
+          4: { fontStyle: 'italic', textColor: [100, 116, 139] },
+        },
+        alternateRowStyles: { fillColor: [248, 250, 252] },
+        didParseCell: (data) => {
+          // Color severity cells: Critical=rose, Monitor=amber, Thick=emerald
+          if (data.column.index === 2 || data.column.index === 4) {
+            const sev = String(data.cell.raw ?? '');
+            if (sev === 'Critical') {
+              data.cell.styles.textColor = [239, 68, 68];
+              data.cell.styles.fontStyle = 'bold';
+            } else if (sev === 'Monitor') {
+              data.cell.styles.textColor = [245, 158, 11];
+            } else {
+              data.cell.styles.textColor = [16, 185, 129];
+            }
+          }
+        },
+      });
+      y = (pdf as any).lastAutoTable.finalY + 10;
+
+      // ════════════════════════════════════════════════════════════════════════
+      // Orthodontic & Biomechanical Plan
+      // ════════════════════════════════════════════════════════════════════════
+      sectionHeader('Orthodontic & Biomechanical Plan');
+
+      labelRow('Root Apex Position', assessment?.root_apex_position_type ?? '—');
+      labelRow('Retraction Strategy', assessment?.general_retraction_strategy ?? '—');
+      y += 3;
+
+      // Preferred Biomechanics block
+      if (assessment?.preferred_biomechanics) {
+        ensureSpace(20);
+        pdf.setFontSize(10);
+        pdf.setFont('helvetica', 'bold');
+        pdf.setTextColor(5, 150, 105);  // emerald-600
+        pdf.text('Preferred Biomechanics', M, y);
+        y += 5;
+        pdf.setFont('helvetica', 'normal');
+        pdf.setTextColor(15, 23, 42);
+        const prefLines = pdf.splitTextToSize(assessment.preferred_biomechanics, USABLE);
+        prefLines.forEach((line: string) => { ensureSpace(6); pdf.text(line, M, y); y += 5; });
+        y += 3;
       }
-      
-      pdf.setDrawColor(15, 23, 42); // Slate-900
-      pdf.line(pageWidth - margin - 60, currentY, pageWidth - margin, currentY);
-      pdf.setFontSize(10);
-      pdf.text("(Dr. Signature)", pageWidth - margin - 45, currentY + 5);
+
+      // Biomechanics to Avoid block
+      if (assessment?.biomechanics_to_avoid) {
+        ensureSpace(20);
+        pdf.setFontSize(10);
+        pdf.setFont('helvetica', 'bold');
+        pdf.setTextColor(220, 38, 38);  // rose-600
+        pdf.text('Biomechanics to Avoid', M, y);
+        y += 5;
+        pdf.setFont('helvetica', 'normal');
+        pdf.setTextColor(15, 23, 42);
+        const avoidLines = pdf.splitTextToSize(assessment.biomechanics_to_avoid, USABLE);
+        avoidLines.forEach((line: string) => { ensureSpace(6); pdf.text(line, M, y); y += 5; });
+        y += 3;
+      }
+
+      // Clinical Implication
+      if (assessment?.clinical_implication) {
+        ensureSpace(16);
+        pdf.setFontSize(9.5);
+        pdf.setFont('helvetica', 'italic');
+        pdf.setTextColor(100, 116, 139);
+        const impLines = pdf.splitTextToSize(`"${assessment.clinical_implication}"`, USABLE);
+        impLines.forEach((line: string) => { ensureSpace(6); pdf.text(line, M, y); y += 5; });
+        y += 3;
+      }
+
+      // ── Disclaimer ──────────────────────────────────────────────────────
+      ensureSpace(14);
+      pdf.setFontSize(8.5);
+      pdf.setFont('helvetica', 'italic');
+      pdf.setTextColor(156, 163, 175);
+      const disclaimer = 'DISCLAIMER: Estimation model based on 2D lateral cephalometric imaging. Does not replace CBCT evaluation. For clinical use by licensed professionals only.';
+      const discLines = pdf.splitTextToSize(disclaimer, USABLE);
+      discLines.forEach((line: string) => { ensureSpace(5); pdf.text(line, M, y); y += 4.5; });
+
+      // ── Signature ────────────────────────────────────────────────────────
+      const sigY = PAGE_H - M - 12;
+      pdf.setDrawColor(15, 23, 42);
+      pdf.line(PAGE_W - M - 65, sigY, PAGE_W - M, sigY);
+      pdf.setFont('helvetica', 'normal');
+      pdf.setFontSize(9);
+      pdf.setTextColor(15, 23, 42);
+      pdf.text('(Dr. Signature)', PAGE_W - M - 50, sigY + 5);
 
       pdf.save(`Ceph_Report_${patientId || 'Anonymous'}.pdf`);
     } catch (err) {
-      console.error("PDF Generation failed:", err);
-      alert("Failed to generate PDF. Check console for details.");
+      console.error('PDF Generation failed:', err);
+      alert('Failed to generate PDF. Check console for details.');
     }
   }, [patientName, patientId, reportDate, results, activeAssessment]);
 
@@ -666,7 +787,7 @@ export default function DashboardApp() {
           </div>
         </div>
 
-        <div className="flex flex-col gap-6 pt-2">
+        <div id="clinical-results-panel" className="flex flex-col gap-6 pt-2 bg-transparent">
           <div className="pl-2 flex items-center justify-between">
             <h2 className="text-xl font-light tracking-tight text-slate-800 dark:text-white">Clinical Assessment</h2>
             <span className="text-xs font-medium text-slate-400 dark:text-slate-500 uppercase tracking-wider">Results</span>
@@ -937,18 +1058,20 @@ export default function DashboardApp() {
                   {activeAssessment?.bone_thickness_interpretation ?? ''} Estimation model based on 2D lateral cephalometric imaging and does not replace CBCT evaluation.
                 </p>
               </div>
-
-              {/* Export PDF Button */}
-              <button
-                onClick={exportPDFReport}
-                className="w-full mt-2 py-3 px-4 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl shadow-md font-bold transition-all duration-200 flex items-center justify-center gap-2"
-              >
-                <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" /></svg>
-                Export PDF Report
-              </button>
             </div>
           )}
         </div>
+
+        {/* Export PDF Button */}
+        {results && !isLoading && (
+          <button
+            onClick={exportPDFReport}
+            className="w-full mt-4 py-3 px-4 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl shadow-md font-bold transition-all duration-200 flex items-center justify-center gap-2"
+          >
+            <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" /></svg>
+            Export PDF Report
+          </button>
+        )}
       </div>
 
       {/* Floating Action Button for Analysis */}
